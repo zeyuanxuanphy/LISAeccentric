@@ -9,7 +9,8 @@ MW Field BBH Simulation Tutorial
 ==============================================================================
 This script demonstrates the full workflow for simulating Fly-by Induced 
 Binary Black Hole (BBH) mergers in the Milky Way Field.
-
+# Ref: Michaely & Perets (2019) [ApJL 887 L36], Raveh at al. (2022) [MNRAS 514.4246R],
+# Michaely & Perets (2022) [ApJ 936 184], Xuan et al. (2024) [ApJ 965 148]
 It covers:
 1. Initialize/Re-run the simulation with custom galaxy properties.
 2. Sample merger eccentricities (e.g., for LIGO rate estimation).
@@ -39,10 +40,10 @@ Field_BBH.simulate_and_save_default_population(
     m2=10 * Field_BBH.m_sun,  # Mass of secondary BH [M_sun]
 
     mp=0.6 * Field_BBH.m_sun,  # Mass of the typical fly-by perturber (e.g., Field Star) [M_sun]
-    fgw=10,  # GW frequency threshold for "Merger" / LIGO band entry [Hz]
+    fgw=10,  # GW frequency threshold for "Merger" / LIGO band eccentricity calculation [Hz]
 
     # --- Galaxy Structure Parameters (Milky Way Model) ---
-    n0=0.1 / (Field_BBH.pc ** 3),  # Stellar number density normalization (1/pc^3)
+    n0=0.1 / (Field_BBH.pc ** 3),  # Stellar number density normalization in solar neighborhood (1/pc^3)
     rsun=8e3 * Field_BBH.pc,  # Distance from Galactic Center to Sun [geometrized distance]
     Rl=2.6e3 * Field_BBH.pc,  # Galaxy scale length [geometrized distance]
     h=1e3 * Field_BBH.pc,  # Galaxy scale height [geometrized distance]
@@ -79,14 +80,14 @@ print('Example output (first 3):', e_samples[:3])
 
 # Plot Cumulative Distribution Function (CDF) of eccentricities
 #
-Field_BBH.plot_eccentricity_cdf(e_samples, label="Field BBH Merger (Fly-by Induced)")
+Field_BBH.plot_eccentricity_cdf(e_samples, label="BBH Mergers in the Field (Fly-by Induced)")
 
 # ==============================================================================
 # FEATURE 2: Accessing Progenitor Population (Library Analysis)
 # ==============================================================================
 # Access the underlying simulated progenitor population.
-# This represents the static library of ALL binaries that are destined to merge.
-# Columns: [acur, e_initial, e_final, Dl, rate, lifetime, tau]
+# This represents the static library of ALL binaries that are destined to merge near current MW age.
+# Columns: [a_initial, e_initial, e_final, Dl, rate, lifetime, tau]
 
 print("=== FEATURE 2: Analyzing Underlying Merger Progenitor Population ===")
 progenitors = Field_BBH.get_merger_progenitor_population()
@@ -135,7 +136,7 @@ single_mw = Field_BBH.get_single_mw_realization(t_window_Gyr=10.0, tobs_yr=t_obs
 
 if len(single_mw) > 0:
     # Print the first two rows to show data format
-    print("Data Format: [Label, Dist(kpc), SMA(au), ecc, m1, m2, SNR]")
+    print("Data Format Example: [Label, Dist(kpc), SMA(au), ecc, m1, m2, SNR]")
     for row in single_mw[:2]:
         print(f"System: D={row[1]:.1f}kpc, a={row[2]:.1f}AU, e={row[3]:.4f}, SNR={row[6]:.2f}")
 else:
@@ -145,11 +146,23 @@ else:
 #
 Field_BBH.plot_mw_field_bbh_snapshot(
     single_mw,
-    title="Snapshot of Fly-by Induced Merger Progenitors in Current MW (1 Realization)",
+    title="Snapshot of BBH Merger Progenitors in the Field (1 MW Realization)",
     tobs_yr=t_obs
 )
 
-# --- 3.2: Arbitrary Number of Systems (Fixed N) ---
+# --- 3.2: Multiple Realizations ---
+# Stacks multiple realizations (e.g., 10 MWs) to see the variance or get better statistics.
+print("\n=== FEATURE 3.3: 10 MW Realizations ===")
+multi_mw = Field_BBH.get_multi_mw_realizations(n_realizations=10, t_window_Gyr=10.0, tobs_yr=t_obs)
+
+print(f"Total systems found in 10 realizations: {len(multi_mw)}")
+Field_BBH.plot_mw_field_bbh_snapshot(
+    multi_mw,
+    title="Snapshot of BBH Merger Progenitors in the Field (10 MW Realizations)",
+    tobs_yr=t_obs
+)
+
+# --- 3.3: Arbitrary Number of Systems (Fixed N) ---
 # Useful for making high-resolution plots or statistical studies where you need
 # a fixed number of samples regardless of the physical rate.
 print("\n=== FEATURE 3.2: Generating 500 Random Systems ===")
@@ -158,18 +171,7 @@ random_500 = Field_BBH.get_random_systems(n_systems=500, t_window_Gyr=10.0, tobs
 print(f"Generated {len(random_500)} systems (Forced Sample).")
 Field_BBH.plot_mw_field_bbh_snapshot(
     random_500,
-    title="Snapshot of Fly-by Induced Merger Progenitors in Current MW (Random N=500)",
+    title="BBH Merger Progenitors (Randomly Generated)",
     tobs_yr=t_obs
 )
 
-# --- 3.3: Multiple Realizations ---
-# Stacks multiple realizations (e.g., 10 MWs) to see the variance or get better statistics.
-print("\n=== FEATURE 3.3: 10 MW Realizations ===")
-multi_mw = Field_BBH.get_multi_mw_realizations(n_realizations=10, t_window_Gyr=10.0, tobs_yr=t_obs)
-
-print(f"Total systems found in 10 realizations: {len(multi_mw)}")
-Field_BBH.plot_mw_field_bbh_snapshot(
-    multi_mw,
-    title="Snapshot of Fly-by Induced Merger Progenitors in Current MW (10 Realizations)",
-    tobs_yr=t_obs
-)
