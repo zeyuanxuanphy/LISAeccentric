@@ -133,10 +133,6 @@ Each system in the returned list has the following columns:
 print("\n=== FEATURE 3.1: Single MW Realization ===")
 t_obs = 10.0  # LISA Observation duration in years (affects SNR)
 single_mw = Field_BBH.get_single_mw_realization(t_window_Gyr=10.0, tobs_yr=t_obs)
-
-
-
-
 if len(single_mw) > 0:
     # Print the first two rows to show data format
     print("Data Format Example: [Label, Dist(kpc), SMA(au), ecc, m1, m2, SNR]")
