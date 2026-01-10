@@ -112,18 +112,29 @@ def generate_ecc_samples_10Hz(channel_name, size=1000):
 
 
 def plot_ecc_cdf(e_list, label="Sample"):
+    # MODIFICATION: Smaller figsize, Larger Fonts
+    plt.figure(figsize=(8, 6))
+
     e_arr = np.array(e_list, dtype=float)
     valid = e_arr[e_arr > 0]
     log_e_sorted = np.sort(np.log10(valid))
     cdf = np.arange(1, len(log_e_sorted) + 1) / len(log_e_sorted)
+
     plt.step(log_e_sorted, cdf, where='post', label=f"{label} (N={len(valid)})")
-    plt.xlabel(r"$\log_{10}(e)$ @ 10Hz");
-    plt.ylabel("CDF")
+
+    # MODIFICATION: Increased Font Sizes
+    plt.xlabel(r"$\log_{10}(e)$ @ 10Hz", fontsize=16)
+    plt.ylabel("CDF", fontsize=16)
+    plt.tick_params(axis='both', which='major', labelsize=14)
+
     plt.xlim(-10, 0);
     plt.ylim(0, 1.05);
-    plt.title(f"Eccentricity of merging BBHs in LIGO band", pad=15, fontsize=12)
+    plt.title(f"Eccentricity of merging BBHs in LIGO band", pad=15, fontsize=14)
     plt.grid(alpha=0.3)
+    plt.legend(fontsize=12)
+    plt.tight_layout()
     plt.show()
+
 
 def get_full_10_realizations():
     return _manager.full_population_data
@@ -168,22 +179,31 @@ def plot_mw_gc_bbh_snapshot(systems=None, title="MW Globular Cluster BBH Snapsho
     my_cmap.set_under(my_cmap(0))
     my_cmap.set_bad(my_cmap(0))
 
-    plt.figure(figsize=(10, 8))
-    sc = plt.scatter(a_p, ome_p, s=np.clip(np.sqrt(snr_p) * 50, 10, 600),
+    # MODIFICATION: Smaller figsize (8, 6) instead of (10, 8)
+    plt.figure(figsize=(8, 6))
+
+    sc = plt.scatter(a_p, ome_p, s=np.clip(np.sqrt(snr_p) * 30, 10, 400),
                      c=np.clip(snr_p, 1e-3, None), cmap=my_cmap,
                      norm=mcolors.LogNorm(vmin=0.1, vmax=200),
                      alpha=1, edgecolors='black', linewidths=0.5)
 
     plt.xscale('log');
     plt.yscale('log')
-    plt.xlabel(r"Semi-major Axis $a$ [au]", fontsize=13)
-    plt.ylabel(r"$1-e$", fontsize=13)
+
+    # MODIFICATION: Larger Axis Labels (16) and Ticks (14)
+    plt.xlabel(r"Semi-major Axis [au]", fontsize=16)
+    plt.ylabel(r"$1-e$", fontsize=16)
+    plt.tick_params(axis='both', which='major', labelsize=14)
+
     plt.xlim(0.001, 4e4);
     plt.ylim(0.0008, 1)
 
     cbar = plt.colorbar(sc, extend='both', aspect=25)
     if hasattr(cbar, 'solids'): cbar.solids.set_alpha(1)
-    cbar.set_label('SNR (10yr LISA)', fontsize=11, labelpad=10)
+
+    # MODIFICATION: Larger Colorbar Labels and Ticks
+    cbar.set_label('SNR (10yr LISA)', fontsize=14, labelpad=10)
+    cbar.ax.tick_params(labelsize=12)
 
     plt.title(f"{title} ($N_{{plot}}$={len(systems)})", pad=15, fontsize=14)
     plt.grid(True, which="both", ls="-", alpha=0.15)

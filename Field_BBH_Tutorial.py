@@ -1,24 +1,27 @@
-# coding:utf-8
-import numpy as np
-from Field_modeling import Field_BBH  # Import core module
-import scipy.constants as sciconsts
-
 """
+Tutorial: Fly-by Induced Binary Black Hole Mergers in the Galactic Field
 ==============================================================================
-MW Field BBH Simulation Tutorial
-==============================================================================
-This script demonstrates the full workflow for simulating Fly-by Induced 
-Binary Black Hole (BBH) mergers in the Milky Way Field.
-# Ref: Michaely & Perets (2019) [ApJL 887 L36], Raveh at al. (2022) [MNRAS 514.4246R],
-# Michaely & Perets (2022) [ApJ 936 184], Xuan et al. (2024) [ApJ 965 148]
+
+This script demonstrates the full workflow for simulating Fly-by Induced
+Binary Black Hole mergers in the Milky Way Field.
+
 It covers:
 1. Initialize/Re-run the simulation with custom galaxy properties.
 2. Sample merger eccentricities (e.g., for LIGO rate estimation).
-3. Analyze the underlying "Progenitor Population" (the static library of mergers).
+3. Analyze the underlying "Progenitor Population" (the static population of binaries destined to merge).
 4. Generate "Snapshots" of the current MW Field fly-by induced high-e BBH population for LISA analysis.
 
+References:
+- Michaely & Perets (2019) [ApJL 887 L36]
+- Raveh et al. (2022) [MNRAS 514.4246R]
+- Michaely & Perets (2022) [ApJ 936 184]
+- Xuan et al. (2024) [ApJ 965 148]
 ==============================================================================
 """
+
+import numpy as np
+from Field_modeling import Field_BBH  # Import core module
+import scipy.constants as sciconsts
 
 # ==============================================================================
 # SECTION 0: Initialize / Re-run Simulation (Optional)
@@ -68,7 +71,7 @@ print("Simulation finished and data saved.")
 # based on merger rate weights. This simulates the eccentricity distribution
 # of Field BBHs as they enter the LIGO/Virgo band (f_GW = 10Hz).
 
-print("=== FEATURE 1: Sampling Merger Eccentricities ===")
+print("\n=== FEATURE 1: Sampling Merger Eccentricities ===")
 N = 5000
 print(f"Sampling {N} systems based on weighted merger rates...")
 
@@ -89,7 +92,7 @@ Field_BBH.plot_eccentricity_cdf(e_samples, label="BBH Mergers in the Field (Fly-
 # This represents the static library of ALL binaries that are destined to merge near current MW age.
 # Columns: [a_initial, e_initial, e_final, Dl, rate, lifetime, tau]
 
-print("=== FEATURE 2: Analyzing Underlying Merger Progenitor Population ===")
+print("\n=== FEATURE 2: Analyzing Underlying Merger Progenitor Population ===")
 progenitors = Field_BBH.get_merger_progenitor_population()
 print(f"Total simulated progenitors in library: {len(progenitors)}")
 
@@ -127,7 +130,7 @@ Each system in the returned list has the following columns:
 [5] Mass 2 (float)   : Mass of secondary BH [M_sun] (default 10)
 [6] SNR (float)      : Signal-to-Noise Ratio (default 10yr LISA observation)
 """
-print("=== FEATURE 3.1: Single MW Realization ===")
+print("\n=== FEATURE 3.1: Single MW Realization ===")
 t_obs = 10.0  # LISA Observation duration in years (affects SNR)
 single_mw = Field_BBH.get_single_mw_realization(t_window_Gyr=10.0, tobs_yr=t_obs)
 
@@ -152,7 +155,7 @@ Field_BBH.plot_mw_field_bbh_snapshot(
 
 # --- 3.2: Multiple Realizations ---
 # Stacks multiple realizations (e.g., 10 MWs) to see the variance or get better statistics.
-print("\n=== FEATURE 3.3: 10 MW Realizations ===")
+print("\n=== FEATURE 3.2: 10 MW Realizations ===")
 multi_mw = Field_BBH.get_multi_mw_realizations(n_realizations=10, t_window_Gyr=10.0, tobs_yr=t_obs)
 
 print(f"Total systems found in 10 realizations: {len(multi_mw)}")
@@ -165,7 +168,7 @@ Field_BBH.plot_mw_field_bbh_snapshot(
 # --- 3.3: Arbitrary Number of Systems (Fixed N) ---
 # Useful for making high-resolution plots or statistical studies where you need
 # a fixed number of samples regardless of the physical rate.
-print("\n=== FEATURE 3.2: Generating 500 Random Systems ===")
+print("\n=== FEATURE 3.3: Generating 500 Random Systems ===")
 random_500 = Field_BBH.get_random_systems(n_systems=500, t_window_Gyr=10.0, tobs_yr=t_obs)
 
 print(f"Generated {len(random_500)} systems (Forced Sample).")

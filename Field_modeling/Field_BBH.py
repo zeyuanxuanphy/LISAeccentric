@@ -365,7 +365,7 @@ def plot_lifetime_cdf():
     plt.xscale('log')
     # MODIFICATION: Larger labels and ticks
     plt.xlabel('Merger Time (Gyr)', fontsize=14)
-    plt.ylabel('CDF (Probability)', fontsize=14)
+    plt.ylabel('CDF', fontsize=14)
     plt.title(f'Lifetime CDF', fontsize=16)
     plt.tick_params(axis='both', which='major', labelsize=12)
 
@@ -462,7 +462,7 @@ def plot_mw_field_bbh_snapshot(systems, title="Snapshot of BBH Merger Progenitor
     plt.xlim(10 ** log_min, 10 ** new_log_max)
 
     # MODIFICATION: Labels and ticks
-    plt.xlabel('Semi-major Axis [AU]', fontsize=16)
+    plt.xlabel('Semi-major Axis [au]', fontsize=16)
     plt.ylabel('1 - e', fontsize=16)
     plt.tick_params(axis='both', which='major', labelsize=14)
 
