@@ -20,19 +20,21 @@
 
 ## Installation
 
-To install the package locally, download and extract the source code. From the root directory (containing `setup.py`), run:
-```bash
-pip install .
+You can install `LISAeccentric` directly from GitHub without manually downloading or unzipping files. Please choose the method that matches your environment.
+
+### Method 1: Jupyter Notebook / Google Colab (Recommended)
+If you are working in a notebook (Jupyter, Colab, Kaggle), run the following command in a code cell. 
+```python
+!pip install https://github.com/zeyuanxuanphy/LISAeccentric/archive/refs/heads/main.zip
 ```
-You can also install the latest version directly from GitHub using pip:
+### Method 2: Terminal / Command Line
+If you are using a standard terminal, run the command without the !.
+```python
+pip install https://github.com/zeyuanxuanphy/LISAeccentric/archive/refs/heads/main.zip
 ```
-pip install git+[https://github.com/zeyuanxuanphy/LISAeccentric.git](https://github.com/zeyuanxuanphy/LISAeccentric.git)
+**Note:** for Mac/Linux: If pip command is not found or defaults to Python 2, try using pip3 instead: 
 ```
-Or if you prefer to clone manually:
-```
-git clone [https://github.com/zeyuanxuanphy/LISAeccentric.git](https://github.com/zeyuanxuanphy/LISAeccentric.git)
-cd LISAeccentric
-pip install .
+pip3 install https://github.com/zeyuanxuanphy/LISAeccentric/archive/refs/heads/main.zip
 ```
 
 ## Features & Usage Examples
