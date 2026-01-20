@@ -3,21 +3,18 @@
 
 ## Overview
 
-**LISAeccentric** is a Python toolkit for simulating eccentric compact binary populations and analyzing their gravitational-wave signals in the LISA band. It provides tools for population modeling, waveform generation, and signal analysis, including:
+**LISAeccentric** is a Python toolkit for generating eccentric compact binary populations and computing their gravitational wave signals in the LISA band. It supports population synthesis, waveform computation, and signal analysis, including:
+#### BBH Population Catalogs
+* **Galactic Nuclei (GN)**: SMBH-perturbed mergers (steady-state & starburst), based on [e.g., Naoz et al., Your GN Ref].
+* **Globular Clusters (GC)**: Dynamically formed BBHs, including in-cluster and ejected mergers, based on Kremer et al. (2020) and Zevin et al. (2020).
+* **Galactic Field**: Fly-by–induced mergers in Milky Way–like and elliptical galaxies, based on Michaely & Perets (2019) and Xuan et al. (2024).
 
-#### BBH Population Modeling
-* **Galactic Nuclei (GN)**: SMBH-perturbed mergers (steady-state & starburst), based on *[e.g., Naoz et al., Your GN Ref]*.
-* **Globular Clusters (GC)**: Dynamically formed BBHs, including in-cluster and ejected mergers, based on *Kremer et al. (2020)* and *Zevin et al. (2020)*.
-* **Galactic Field**: Fly-by–induced mergers in Milky Way–like and elliptical galaxies, based on *Michaely & Perets (2019)* and *Xuan et al. (2024)*.
-
-#### Gravitational Wave Modeling
-* PN-based, time-domain inspiral waveforms for eccentric binaries.
-* Orbital parameter evolution during inspiral.
-
-#### Signal Analysis
-* LISA detector response calculation (TDI).
-* Signal-to-Noise Ratio (SNR) and inner-product computation.
-* Characteristic strain ($h_c$) and stochastic background evaluation.
+#### Waveform & Signal Analysis
+* Generate PN-based, time-domain waveforms for eccentric binaries.
+* Evolve orbital parameters throughout the inspiral.
+* Compute LISA detector response (TDI).
+* Calculate signal-to-noise ratio (SNR) and waveform inner products.
+* Evaluate characteristic strain ($h_c$) and stochastic background.
 
 ---
 
