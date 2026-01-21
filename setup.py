@@ -97,10 +97,15 @@ setup(
 
     # Dependencies
     install_requires=[
-        "numpy>=1.21.0",
-        "scipy>=1.7.0",
-        "matplotlib>=3.5.0",
-        "pandas>=1.4.0",
+
+        "numpy>=1.21.0,<2.0.0",
+
+        "scipy>=1.7.0,<2.0.0",
+
+        "matplotlib>=3.5.0,<4.0.0",
+
+        "pandas>=1.4.0,<2.0.0",
+
         "numba>=0.56.0",
     ],
 
