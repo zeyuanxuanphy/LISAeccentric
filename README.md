@@ -7,7 +7,7 @@
 #### BBH Population Catalogs
 * **Galactic Nuclei (GN)**: SMBH-perturbed mergers (steady-state & starburst), based on [e.g., Naoz et al., ....].
 * **Globular Clusters (GC)**: Dynamically formed BBHs, including in-cluster and ejected mergers, based on Kremer et al. (2020) and Zevin et al. (2020).
-* **Galactic Field**: Fly-by–induced mergers in Milky Way–like and elliptical galaxies, based on Michaely & Perets (2019) and Xuan et al. (2024).
+* **Galactic Field**: Fly-by–induced mergers in Milky Way–like and elliptical galaxies, based on Michaely & Perets (2019) ...
 
 #### Waveform & Signal Analysis
 * Generate PN-based, time-domain waveforms for eccentric binaries.
