@@ -56,7 +56,7 @@ module load python/3.9.6
 python your_script.py
 ```
 
-## Features & Usage Examples
+## Features & Usage Examples (Not Yet Finished, see LISA_eccentric_tutorial.ipynb for examples)
 
 The following examples demonstrate the core workflows derived from the official tutorial.1. Galactic Nucleus (GN)Model SMBH-perturbed mergers and starburst scenarios using the Kozai-Lidov mechanism.Sample Eccentricities (LIGO Band)Analyze the eccentricity distribution as binaries enter the 10Hz frequency band.Pythonimport LISAeccentric
 import matplotlib.pyplot as plt
