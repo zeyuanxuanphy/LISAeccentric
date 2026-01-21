@@ -11,10 +11,11 @@
 
 #### Waveform & Signal Analysis
 * Generate PN-based, time-domain waveforms for eccentric binaries.
-* Evolve orbital parameters throughout the inspiral.
-* Compute LISA detector response (TDI).
-* Calculate signal-to-noise ratio (SNR) and waveform inner products.
-* Evaluate characteristic strain ($h_c$) and stochastic background.
+* Evolve orbital parameters throughout the inspiral stage.
+* Compute LISA detector response (Michelson response).
+* Evaluate characteristic strain ($h_c$) and stochastic backgrounds.
+* Calculate signal-to-noise ratio (SNR) and noise-weighted inner products for time-domain waveforms.
+
 
 ---
 
