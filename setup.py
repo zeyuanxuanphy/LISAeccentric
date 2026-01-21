@@ -4,10 +4,91 @@ from setuptools.command.develop import develop
 import os
 import shutil
 import glob
+import sys
+import subprocess
 
 
 # ==============================================================================
-# 1. Cache Cleaning Logic
+# 1. Environment & Compiler Detection Logic
+# ==============================================================================
+def is_legacy_gcc():
+    """
+    Detect if the system GCC version is too old (< 5.0).
+    Legacy GCC (e.g., 4.8.5 on CentOS 7) does not support the full C11 standard
+    required to build modern Pandas (2.x) and Numpy (2.x) from source.
+    """
+    # This issue is specific to Linux; Windows/MacOS usually have modern toolchains.
+    if not sys.platform.startswith('linux'):
+        return False
+
+    # Check for manual override via environment variable (e.g., LISA_LEGACY=1)
+    if os.environ.get("LISA_LEGACY") == "1":
+        print("[Setup] Legacy mode forced via environment variable.")
+        return True
+
+    try:
+        # Try to invoke the compiler to get the version.
+        # 'cc' is the system default; 'gcc' is specific.
+        commands_to_try = [['cc', '-dumpversion'], ['gcc', '-dumpversion']]
+
+        version_str = None
+        for cmd in commands_to_try:
+            try:
+                # capture_output requires Python 3.7+, using check_output for 3.x compatibility
+                output = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+                version_str = output.decode('utf-8').strip()
+                break
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                continue
+
+        if version_str:
+            # Parse major version (e.g., "4.8.5" -> 4, "11.2.0" -> 11)
+            major_ver = int(version_str.split('.')[0])
+            print(f"[Setup] Detected Compiler Version: {version_str}")
+
+            if major_ver < 5:
+                print(f"[Setup] Warning: Compiler is old (< 5). Enforcing legacy dependencies to avoid build errors.")
+                return True
+
+    except Exception as e:
+        print(f"[Setup] Warning: Could not detect GCC version ({e}). Assuming modern environment.")
+
+    return False
+
+
+def get_requirements():
+    """
+    Dynamically generate the list of requirements based on the compiler version.
+    """
+    # Base requirements needed for all environments
+    reqs = [
+        "matplotlib>=3.5.0,<4.0.0",
+        "numba>=0.56.0",
+    ]
+
+    if is_legacy_gcc():
+        # --- Legacy Environment (e.g., Cluster with GCC 4.8) ---
+        # Cap versions to avoid C11 compilation errors
+        reqs.extend([
+            "numpy>=1.21.0,<2.0.0",
+            "scipy>=1.7.0,<1.13.0",  # Scipy 1.13+ also requires newer compilers
+            "pandas>=1.4.0,<2.0.0",
+        ])
+    else:
+        # --- Modern Environment (e.g., Colab, Local PC) ---
+        # Allow newer versions so pip can find binary wheels (much faster install).
+        # We still set the minimum version to ensure API compatibility.
+        reqs.extend([
+            "numpy>=1.21.0",
+            "scipy>=1.7.0",
+            "pandas>=1.4.0",
+        ])
+
+    return reqs
+
+
+# ==============================================================================
+# 2. Cache Cleaning Logic
 # ==============================================================================
 def clean_numba_cache():
     """
@@ -44,7 +125,7 @@ def clean_numba_cache():
 
 
 # ==============================================================================
-# 2. Custom Command Classes
+# 3. Custom Command Classes
 # ==============================================================================
 class CustomInstall(install):
     """Override standard install to clean cache first."""
@@ -63,7 +144,7 @@ class CustomDevelop(develop):
 
 
 # ==============================================================================
-# 3. Setup Configuration
+# 4. Setup Configuration
 # ==============================================================================
 
 # Read README.md for long description
@@ -95,20 +176,8 @@ setup(
         'develop': CustomDevelop,
     },
 
-    # Dependencies
-    install_requires=[
-
-        "numpy>=1.21.0,<2.0.0",
-
-        "scipy>=1.7.0,<2.0.0",
-
-        "matplotlib>=3.5.0,<4.0.0",
-
-        "pandas>=1.4.0,<2.0.0",
-
-        "numba>=0.56.0",
-    ],
-
+    # Dependencies: Dynamically determined based on environment compiler capabilities
+    install_requires=get_requirements(),
 
     # Python version requirement
     python_requires=">=3.9",
