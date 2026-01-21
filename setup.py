@@ -95,17 +95,19 @@ setup(
         'develop': CustomDevelop,
     },
 
+
     # Dependencies
     install_requires=[
-        "numpy>=1.20.0",
-        "scipy>=1.7.0",
-        "matplotlib>=3.4.0",
-        "pandas>=1.3.0",
-        "numba>=0.55.0",
+        "numpy>=1.23.4",
+        "scipy>=1.13.1",
+        "matplotlib>=3.6.3",  # <--- 修改这里：从 3.4.0 改为 3.5.0
+        "pandas>=2.2.3",
+        "numba>=0.60.0",
     ],
 
+
     # Python version requirement
-    python_requires=">=3.8",
+    python_requires=">=3.9",
 
     # Data Inclusion Strategy
     include_package_data=True,
