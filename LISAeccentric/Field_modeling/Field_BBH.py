@@ -19,14 +19,62 @@ years = 365 * 24 * 3600.0
 pc = 3.261 * sciconsts.light_year / sciconsts.c
 AU = sciconsts.au / sciconsts.c
 
+# --- Global Noise Data Storage ---
+_LISA_NOISE_DATA = None
+
+
+def _try_load_lisa_noise():
+    """
+    尝试从程序所在文件夹的上一级目录加载 LISA_noise_ASD.csv
+    如果成功，将数据存储在全局变量 _LISA_NOISE_DATA 中
+    """
+    global _LISA_NOISE_DATA
+    try:
+        # 获取当前脚本所在目录的上一级目录
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        file_path = os.path.join(parent_dir, 'LISA_noise_ASD.csv')
+
+        if os.path.exists(file_path):
+            # 尝试读取，假设逗号分隔，如果有表头则跳过第一行
+            try:
+                data = np.loadtxt(file_path, delimiter=',')
+            except ValueError:
+                data = np.loadtxt(file_path, delimiter=',', skiprows=1)
+
+            # 按第一列（频率）排序
+            sort_idx = np.argsort(data[:, 0])
+            sorted_data = data[sort_idx]
+
+            _LISA_NOISE_DATA = {
+                'f': sorted_data[:, 0],
+                'asd': sorted_data[:, 1],
+                'f_min': sorted_data[0, 0],
+                'f_max': sorted_data[-1, 0]
+            }
+            print(f"[Info] Successfully loaded LISA noise file: {file_path}")
+        else:
+            print(f"[Info] LISA noise file not found at {file_path}. Using default analytical model.")
+    except Exception as e:
+        print(f"[Warning] Failed to load LISA noise file ({e}). Using default analytical model.")
+        _LISA_NOISE_DATA = None
+
+
+# 初始化加载
+_try_load_lisa_noise()
+
 
 def forb(m1, m2, a):
     return 1 / 2 / pi * np.sqrt(m1 + m2) * np.power(a, -3.0 / 2.0)
+
+
 def tmerger(m1, m2, a, e):
     beta = 64 / 5 * m1 * m2 * (m1 + m2)
     tc = np.power(a, 4) / (4 * beta)
     t = 768 / 425 * tc * np.power(1 - e * e, 7 / 2)
     return t
+
+
 def peters_factor_func(e):
     if e <= 1e-16: return 0.0
     if e >= 1.0: return float('inf')
@@ -35,6 +83,7 @@ def peters_factor_func(e):
     term3 = 1 - e * e
     return term1 * term2 / term3
 
+
 # --- SNR Functions ---
 def S_gal_N2A5(f):
     if f >= 1.0e-5 and f < 1.0e-3: return np.power(f, -2.3) * np.power(10, -44.62) * 20.0 / 3.0
@@ -42,13 +91,37 @@ def S_gal_N2A5(f):
     if f >= np.power(10, -2.7) and f < np.power(10, -2.4): return np.power(f, -8.8) * np.power(10, -62.8) * 20.0 / 3.0
     if f >= np.power(10, -2.4) and f <= 0.01: return np.power(f, -20.0) * np.power(10, -89.68) * 20.0 / 3.0
     return 0
-def S_n_lisa(f):
+
+
+def _S_n_lisa_original(f):
+    """原有程序的 Snf 计算方法（作为 fallback）"""
     m1 = 5.0e9
     m2 = sciconsts.c * 0.41 / m1 / 2.0
     return 20.0 / 3.0 * (1 + np.power(f / m2, 2.0)) * (4.0 * (
             9.0e-30 / np.power(2 * sciconsts.pi * f, 4.0) * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23) / np.power(m1,
                                                                                                                 2.0) + S_gal_N2A5(
         f)
+
+
+def S_n_lisa(f):
+    """
+    修改后的 Snf 计算方法：
+    1. 优先使用加载的 CSV 数据进行插值并平方
+    2. 超出边界返回 1
+    3. 如果没有数据，调用原方法
+    """
+    if _LISA_NOISE_DATA is not None:
+        # 边界检查
+        if f < _LISA_NOISE_DATA['f_min'] or f > _LISA_NOISE_DATA['f_max']:
+            return 1.0
+
+        # 线性插值 ASD
+        asd = np.interp(f, _LISA_NOISE_DATA['f'], _LISA_NOISE_DATA['asd'])
+        # 返回 Snf = ASD^2
+        return asd * asd
+    else:
+        # Fallback 到原程序方法
+        return _S_n_lisa_original(f)
 def calculate_snr(m1, m2, a, e, Dl, tobs):
     h0max = np.sqrt(32 / 5) * m1 * m2 / (Dl * a * (1 - e))
     f0max = 2 * np.sqrt((m1 + m2) / (4 * pi * pi * np.power(a * (1 - e), 3.0)))
