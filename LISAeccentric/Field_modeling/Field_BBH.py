@@ -85,39 +85,45 @@ def peters_factor_func(e):
 
 
 # --- SNR Functions ---
-def S_gal_N2A5(f):
+# 1. 将原有的逻辑改名为内部标量函数
+def _S_gal_N2A5_scalar(f):
     if f >= 1.0e-5 and f < 1.0e-3: return np.power(f, -2.3) * np.power(10, -44.62) * 20.0 / 3.0
     if f >= 1.0e-3 and f < np.power(10, -2.7): return np.power(f, -4.4) * np.power(10, -50.92) * 20.0 / 3.0
     if f >= np.power(10, -2.7) and f < np.power(10, -2.4): return np.power(f, -8.8) * np.power(10, -62.8) * 20.0 / 3.0
     if f >= np.power(10, -2.4) and f <= 0.01: return np.power(f, -20.0) * np.power(10, -89.68) * 20.0 / 3.0
-    return 0
+    return 0.0
 
+# 2. 使用 numpy.vectorize 让它支持数组输入
+# 这样即使传入数组，numpy 也会自动对每个元素调用上面的函数
+S_gal_N2A5 = np.vectorize(_S_gal_N2A5_scalar)
 
 def _S_n_lisa_original(f):
-    """原有程序的 Snf 计算方法（作为 fallback）"""
+    """原有程序的 Snf 计算方法（作为 fallback），现已支持向量"""
     m1 = 5.0e9
     m2 = sciconsts.c * 0.41 / m1 / 2.0
+    # 注意：这里的 S_gal_N2A5 已经是向量化版本了，所以这里是安全的
     return 20.0 / 3.0 * (1 + np.power(f / m2, 2.0)) * (4.0 * (
             9.0e-30 / np.power(2 * sciconsts.pi * f, 4.0) * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23) / np.power(m1,
-                                                                                                                2.0) + S_gal_N2A5(
-        f)
-
+                                                                                                                2.0) + S_gal_N2A5(f)
 
 def S_n_lisa(f):
     """
-    修改后的 Snf 计算方法：
-    1. 优先使用加载的 CSV 数据进行插值并平方
-    2. 超出边界返回 1
-    3. 如果没有数据，调用原方法
+    修改后的 Snf 计算方法 (向量化版本)：
+    1. 优先使用加载的 CSV 数据进行插值
+    2. 使用 np.interp 的 left/right 参数处理边界（超出范围置为 1.0）
+    3. 这样即输入是数组也能正常工作
     """
     if _LISA_NOISE_DATA is not None:
-        # 边界检查
-        if f < _LISA_NOISE_DATA['f_min'] or f > _LISA_NOISE_DATA['f_max']:
-            return 1.0
-
-        # 线性插值 ASD
-        asd = np.interp(f, _LISA_NOISE_DATA['f'], _LISA_NOISE_DATA['asd'])
-        # 返回 Snf = ASD^2
+        # [核心修改]
+        # 不要使用 if f < min，直接使用 np.interp 的 left 和 right 参数
+        # 当 f 小于 f_min 或 大于 f_max 时，自动返回 1.0
+        asd = np.interp(
+            f,
+            _LISA_NOISE_DATA['f'],
+            _LISA_NOISE_DATA['asd'],
+            left=1.0,
+            right=1.0
+        )
         return asd * asd
     else:
         # Fallback 到原程序方法
