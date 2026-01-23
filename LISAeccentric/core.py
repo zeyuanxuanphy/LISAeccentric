@@ -3,7 +3,9 @@ import scipy.constants as sciconsts
 import matplotlib.pyplot as plt
 from dataclasses import dataclass, field
 from typing import List, Optional, Any, Dict, Union
-
+import shutil  # Added for file operations
+import os
+import importlib
 # ==============================================================================
 # 修正：使用相对导入 (Relative Import)
 # 只要 core.py 和 GN_modeling 文件夹在同一个包目录下，必须加 "."
@@ -170,6 +172,7 @@ class LISAeccentric:
         self.GC = self._GC_Handler()
         self.Field = self._Field_Handler()
         self.Waveform = self._Waveform_Handler()
+        self.Noise = self._Noise_Handler()
 
     # ==========================================================================
     # MODULE 1: Galactic Nucleus (GN)
@@ -543,3 +546,157 @@ class LISAeccentric:
             if plot:
                 hc_cal.plot_simulation_results(batch_results)
             return batch_results
+
+    # ==========================================================================
+    # MODULE 5: Noise Handler (Updated)
+    # ==========================================================================
+    class _Noise_Handler:
+        def __init__(self):
+            # 定位 CSV 文件路径
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            self.noise_file_path = os.path.join(current_dir, 'LISA_noise_ASD.csv')
+            self.base_backup_name = 'LISA_noise_ASD_original'
+
+        def _reload_dependencies(self):
+            """
+            Internal Method: Force reload backend calculation modules.
+            This ensures that subsequent calculations use the NEW noise curve
+            without requiring a Python kernel restart.
+            """
+            print("[Noise] Auto-reloading backend modules (hc_cal, PN_waveform)...")
+            try:
+                # 必须重载那些在 import 时读取 noise csv 的模块
+                importlib.reload(GN_BBH)
+                importlib.reload(Field_BBH)
+                importlib.reload(Field_BBH_Elliptical)
+                importlib.reload(hc_cal)
+                importlib.reload(PN_waveform)
+                print("[Noise] Modules reloaded successfully. New noise curve is active.")
+            except Exception as e:
+                print(f"[Noise] Warning: Module auto-reload failed. You may need to restart kernel. Error: {e}")
+
+        def update_noise_curve(self, data_list):
+            """
+            更新噪声曲线文件，并自动备份旧文件。
+            input: data_list = [flist, ASDlist]
+            """
+            if len(data_list) != 2:
+                print("Error: Input must be [flist, ASDlist].")
+                return
+
+            flist, asdlist = data_list[0], data_list[1]
+            # 获取绝对路径用于显示
+            abs_path = os.path.abspath(self.noise_file_path)
+
+            # 1. 检查并备份现有文件
+            if os.path.exists(self.noise_file_path):
+                i = 1
+                while True:
+                    backup_name = f"{self.base_backup_name}_{i}.csv"
+                    backup_path = os.path.join(os.path.dirname(self.noise_file_path), backup_name)
+                    if not os.path.exists(backup_path):
+                        shutil.move(self.noise_file_path, backup_path)
+                        print(f"[Noise] Backup created: {os.path.abspath(backup_path)}")
+                        break
+                    i += 1
+            else:
+                print(f"[Noise] Warning: Original file not found at {abs_path}. Creating new one without backup.")
+
+            # 2. 写入新文件
+            try:
+                data_to_save = np.column_stack((flist, asdlist))
+                np.savetxt(self.noise_file_path, data_to_save, delimiter=',', header='f,ASD', comments='')
+                print(f"[Noise] Successfully updated noise file at:\n        {abs_path}")
+
+                # 3. 自动重载
+                self._reload_dependencies()
+
+            except Exception as e:
+                print(f"[Noise] Error writing file: {e}")
+
+        def recover_noise_curve(self, version=None):
+            """
+            恢复噪声曲线文件。
+            """
+            target_dir = os.path.dirname(self.noise_file_path)
+
+            if version == 'official':
+                source_name = "LISA_noise_ASD_official.csv"
+            elif version == 'N2A5':
+                source_name = "LISA_noise_ASD_N2A5.csv"
+            elif version is None:
+                source_name = f"{self.base_backup_name}_1.csv"
+            else:
+                source_name = f"{self.base_backup_name}_{version}.csv"
+
+            source_path = os.path.join(target_dir, source_name)
+            abs_main_path = os.path.abspath(self.noise_file_path)
+            abs_source_path = os.path.abspath(source_path)
+
+            if not os.path.exists(source_path):
+                print(f"[Noise] Error: Source file not found:\n        {abs_source_path}")
+                return
+
+            try:
+                shutil.copyfile(source_path, self.noise_file_path)
+                print(f"[Noise] Recovered noise file from:\n        {abs_source_path}")
+                print(f"[Noise] To main path:\n        {abs_main_path}")
+
+                # 自动重载
+                self._reload_dependencies()
+
+            except Exception as e:
+                print(f"[Noise] Error recovering file: {e}")
+
+        def clean_backups(self):
+            """
+            新增功能 1: 清理目录下所有自动生成的备份文件。
+            """
+            target_dir = os.path.dirname(self.noise_file_path)
+            abs_dir = os.path.abspath(target_dir)
+            print(f"[Noise] Cleaning backup files in:\n        {abs_dir}")
+            count = 0
+
+            try:
+                for filename in os.listdir(target_dir):
+                    if filename.startswith(self.base_backup_name) and filename.endswith(".csv"):
+                        file_path = os.path.join(target_dir, filename)
+                        os.remove(file_path)
+                        count += 1
+            except Exception as e:
+                print(f"[Noise] Error during cleaning: {e}")
+
+            print(f"[Noise] Removed {count} backup file(s).")
+
+        def get_noise_curve(self, plot=True):
+            """
+            新增功能 2: 读取当前 Noise Curve 并计算特征应变。
+            Returns: [f, sqrt(f*Sn)]
+            """
+            if not os.path.exists(self.noise_file_path):
+                print(f"[Noise] Error: File not found at {os.path.abspath(self.noise_file_path)}")
+                return None
+
+            try:
+                data = np.loadtxt(self.noise_file_path, delimiter=',', skiprows=1)
+                f = data[:, 0]
+                asd = data[:, 1]
+
+                noise_char = np.sqrt(f) * asd
+
+                if plot:
+                    plt.figure(figsize=(8, 6))
+                    plt.loglog(f, noise_char, color='black', linewidth=1.5, label='Current Noise Curve')
+                    plt.xlabel('Frequency [Hz]', fontsize=12)
+                    plt.ylabel(r'$\sqrt{f S_n(f)}$ [unitless]', fontsize=12)
+                    plt.title(f'Characteristic Noise Strain\nSource: {os.path.basename(self.noise_file_path)}',
+                              fontsize=12)
+                    plt.grid(True, which="both", ls="--", alpha=0.4)
+                    plt.legend()
+                    plt.show()
+
+                return [f, noise_char]
+
+            except Exception as e:
+                print(f"[Noise] Error reading or plotting noise curve: {e}")
+                return None

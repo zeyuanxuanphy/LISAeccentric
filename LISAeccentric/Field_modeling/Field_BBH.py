@@ -70,7 +70,7 @@ def _try_load_lisa_noise():
                 'log_f_0': log_f[0],  # 第一个点的 log(f)
                 'log_asd_0': log_asd[0]  # 第一个点的 log(ASD)
             }
-            print(f"[Info] Successfully loaded LISA noise file: {file_path}")
+            #print(f"[Info] Successfully loaded LISA noise file: {file_path}")
         else:
             print(f"[Info] LISA noise file not found at {file_path}. Using default analytical model.")
     except Exception as e:

@@ -14,6 +14,7 @@ import math
 import matplotlib.pyplot as plt
 from scipy.optimize import brentq
 import os
+from numba import njit, float64
 # ==========================================
 # 1. 物理常数与核心数学/物理函数 (保持原样)
 # ==========================================
@@ -110,7 +111,7 @@ def _try_load_lisa_noise():
                 'log_f_0': log_f[0],  # 第一个点的 log(f)
                 'log_asd_0': log_asd[0]  # 第一个点的 log(ASD)
             }
-            print(f"[Info] Successfully loaded LISA noise file: {file_path}")
+            #print(f"[Info] Successfully loaded LISA noise file: {file_path}")
         else:
             print(f"[Info] LISA noise file not found at {file_path}. Using default analytical model.")
     except Exception as e:
@@ -208,22 +209,23 @@ def dforb_dt(m1, m2, a, e):
 
 
 # ==========================================
-# 2. 核心计算逻辑 (并行worker)
+# 2. 核心计算逻辑
 # ==========================================
 
 def _core_calculator(args):
     """
     底层计算核心。
-    Args: (m1_SI, m2_SI, a_SI, e, Dl_SI, tobs_SI)
+    Args: (m1_SI, m2_SI, a_SI, e, Dl_SI, tobs_SI, target_max_points, verbose)
     """
-    m1, m2, a, e, Dl, tobs = args
+    # [修改] 增加 verbose 参数接收
+    m1, m2, a, e, Dl, tobs, target_max_points, verbose = args
 
     # 1. 计算基频
     forb = 1 / 2 / pi * np.sqrt(m1 + m2) * np.power(a, -3.0 / 2.0)
 
     # 2. 确定 n 的范围
-    e_safe = min(e, 0.999)
-    n_peak = np.sqrt(1 + e_safe) * np.power((1 - e_safe), -3.0 / 2.0)
+    e_calc = min(e, 1 - 1e-16)
+    n_peak = np.sqrt(1 + e_calc) * np.power((1 - e_calc), -3.0 / 2.0)
 
     n_start = max(1, int(0.01 * n_peak))
     n_end = int(10 * n_peak)
@@ -231,21 +233,30 @@ def _core_calculator(args):
     if n_end < n_start:
         return [], [], [], []
 
-    n_arr = np.arange(n_start, n_end + 1, dtype=np.float64)
+    # [修改] 智能稀疏采样逻辑 + verbose 控制
+    step = 1
+    total_harmonics = n_end - n_start
+
+    # 如果总点数超过了设定的上限，则增加步长
+    if total_harmonics > target_max_points:
+        step = int(total_harmonics / target_max_points)
+        # [核心] 只有当 verbose=True 时才打印
+        if verbose:
+            print(f"   [Info] Large harmonics ({total_harmonics}), downsampling step={step} (max={target_max_points})")
+
+    n_arr = np.arange(n_start, n_end + 1, step, dtype=np.float64)
 
     df_dt_val = dforb_dt(m1, m2, a, e)
     h0_val = h0(a, m1, m2, Dl)
-
     g_vals = g(n_arr, e)
+
     hn_arr = 2 / n_arr * np.sqrt(g_vals) * h0_val
     fn_arr = n_arr * forb
 
     hnc2 = 2 * fn_arr ** 2 * hn_arr ** 2 / (n_arr * df_dt_val)
-    hnc = np.sqrt(hnc2)  # 特征应变
-
+    hnc = np.sqrt(hnc2)
     hcn_bkg = 2 / n_arr * np.sqrt(g_vals) * h0_val
     Snfvec = hcn_bkg ** 2 / forb
-
     hc_avg2 = 2 * fn_arr ** 2 * hn_arr ** 2 / (forb) * tobs
     hc_avg = np.sqrt(hc_avg2)
 
@@ -256,11 +267,10 @@ def _core_calculator(args):
 # 3. 封装接口
 # ==========================================
 
-def calculate_single_system(m1, m2, a, e, Dl, tobs_years=1.0):
+def calculate_single_system(m1, m2, a, e, Dl, tobs_years=1.0, target_max_points=20000, verbose=True):
     """
     接口1: 单个系统计算
-    输入: m1(Msun), m2(Msun), a(AU), e, Dl(Mpc)
-    返回: List [fnlist, hclist, hcavglist, Snflist]
+    默认: verbose=True (允许打印), target_max_points=20000 (高精度)
     """
     m1_si = m1 * m_sun
     m2_si = m2 * m_sun
@@ -268,11 +278,69 @@ def calculate_single_system(m1, m2, a, e, Dl, tobs_years=1.0):
     Dl_si = Dl * 1e3 * pc
     tobs_si = tobs_years * years
 
-    args = (m1_si, m2_si, a_si, e, Dl_si, tobs_si)
+    # 传入 verbose=True
+    args = (m1_si, m2_si, a_si, e, Dl_si, tobs_si, target_max_points, verbose)
     fn, hnc, hc_avg, snf = _core_calculator(args)
 
     return [fn, hc_avg, hnc, snf]
 
+
+def process_population_batch(system_list_raw, tobs_years=1.0, n_cores=1, target_max_points=1000):
+    """
+    接口2: 批量处理系统
+    强制: verbose=False (在 batch 内部屏蔽所有打印), target_max_points 默认为 1000 (低精度/高速度)
+    """
+
+    pool_args = []
+    tobs_si = tobs_years * years
+
+    # 强制静默
+    batch_verbose = False
+
+    for item in system_list_raw:
+        # item: [id, Dl, a, e, m1, m2]
+        Dl_si = item[1] * 1e3 * pc
+        a_si = item[2] * AU
+        e_val = item[3]
+        m1_si = item[4] * m_sun
+        m2_si = item[5] * m_sun
+
+        # [核心] 将 target_max_points 和 verbose=False 传入元组
+        pool_args.append((m1_si, m2_si, a_si, e_val, Dl_si, tobs_si, target_max_points, batch_verbose))
+
+    logfrange = np.linspace(-6, 0, 1000)
+    faxis = np.power(10., logfrange)
+    Snf_tot = np.zeros_like(faxis)
+
+    all_fn_lists = []
+    all_hcavg_lists = []
+    all_hnc_lists = []
+
+    # [核心] 如果需要完全静默，这里也不打印；如果仅屏蔽 worker 打印，这里可以保留
+    # 根据“屏蔽 print 输出”的要求，这里也加上 verbose 判断，默认为 False
+    if batch_verbose:
+        print(f"Start calculation for {len(system_list_raw)} systems (Sequential)...")
+
+    t_start = time.time()
+
+    results = []
+    for i, args in enumerate(pool_args):
+        results.append(_core_calculator(args))
+
+    for res in results:
+        fn_sys, hnc_sys, hc_avg_sys, Snf_sys = res
+        if len(fn_sys) > 0:
+            all_fn_lists.append(fn_sys)
+            all_hcavg_lists.append(hc_avg_sys)
+            all_hnc_lists.append(hnc_sys)
+            if len(fn_sys) > 1:
+                Snf_interp = np.interp(faxis, fn_sys, Snf_sys, left=0, right=0)
+                Snf_tot += Snf_interp
+
+    if batch_verbose:
+        print(f"Calculation done in {time.time() - t_start:.2f} seconds.")
+
+    return [faxis, Snf_tot, all_fn_lists, all_hcavg_lists, all_hnc_lists]
 
 # [新增功能] 4. 单个系统绘图
 # ==========================================
@@ -314,66 +382,6 @@ def plot_single_system_results(single_system_res, xlim=[1e-6, 1], ylim=[1e-23, 1
     plt.title('Single Eccentric Binary Spectrum', fontsize=16)
     plt.tight_layout()
     plt.show()
-def process_population_batch(system_list_raw, tobs_years=1.0, n_cores=1):
-    """
-    接口2: 批量处理系统 (已修改为纯串行模式，移除了 Pool)
-    输入:
-        system_list_raw: 原始数据列表 list of lists
-        n_cores: 保留参数以兼容接口，但不再使用。
-    """
-
-    pool_args = []
-    tobs_si = tobs_years * years
-
-    for item in system_list_raw:
-        # item: [id, Dl, a, e, m1, m2]
-        Dl_si = item[1] * 1e3 * pc
-        a_si = item[2] * AU
-        e_val = item[3]
-        m1_si = item[4] * m_sun
-        m2_si = item[5] * m_sun
-
-        pool_args.append((m1_si, m2_si, a_si, e_val, Dl_si, tobs_si))
-
-    # 定义公共频率轴
-    logfrange = np.linspace(-6, 0, 1000)
-    faxis = np.power(10., logfrange)
-    Snf_tot = np.zeros_like(faxis)
-
-    # 存储列表初始化
-    all_fn_lists = []
-    all_hcavg_lists = []
-    all_hnc_lists = []
-
-    # [修改] 不再使用多进程，使用单线程循环
-    # 无论 n_cores 设置为多少，这里都强制串行
-    print(f"Start calculation for {len(system_list_raw)} systems (Sequential mode)...")
-    t_start = time.time()
-
-    results = []
-    # 直接使用简单的列表推导或循环
-    for i, args in enumerate(pool_args):
-        # 如果数据量非常大，可以取消下面这行的注释来查看进度
-        # if i % 100 == 0: print(f"Processing {i}/{len(pool_args)}...")
-        results.append(_core_calculator(args))
-
-    # 结果聚合
-    for res in results:
-        fn_sys, hnc_sys, hc_avg_sys, Snf_sys = res
-
-        if len(fn_sys) > 0:
-            all_fn_lists.append(fn_sys)
-            all_hcavg_lists.append(hc_avg_sys)
-            all_hnc_lists.append(hnc_sys)
-
-            # 背景噪声计算
-            if len(fn_sys) > 1:
-                Snf_interp = np.interp(faxis, fn_sys, Snf_sys, left=0, right=0)
-                Snf_tot += Snf_interp
-
-    print(f"Calculation done in {time.time() - t_start:.2f} seconds.")
-
-    return [faxis, Snf_tot, all_fn_lists, all_hcavg_lists, all_hnc_lists]
 
 def plot_simulation_results(simulation_result_list,xlim=[1e-6,1],ylim=[1e-24, 1e-15]):
     """

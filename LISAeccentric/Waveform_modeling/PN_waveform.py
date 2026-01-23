@@ -21,7 +21,7 @@ import os
 import shutil
 import sys
 import warnings
-
+from scipy.optimize import brentq
 
 # -----------------------------------------------------------------------------
 # [AUTO-FIX] Numba Cache Integrity Check
@@ -116,39 +116,140 @@ def h0(a, m1, m2, Dl):
     return np.sqrt(32 / 5) * m1 * m2 / Dl / a
 def forb(M, a):
     return 1.0 / 2.0 / pi * np.sqrt(M) * np.power(a, -1.5)
-def S_gal_N2A5(f):
-    # 使用 np.where 或 boolean masking 来处理分段函数
-    res = np.zeros_like(f)
+# --- Global Noise Data Storage ---
+_LISA_NOISE_DATA = None
 
-    # 避免 log10(0) 或负数次幂的警告，可以先计算掩码
-    # 这里的写法利用了 boolean indexing 赋值
 
-    mask1 = (f >= 1.0e-5) & (f < 1.0e-3)
-    res[mask1] = np.power(f[mask1], -2.3) * (10 ** -44.62) * 20.0 / 3.0
+def _try_load_lisa_noise():
+    """
+    尝试从程序所在文件夹的上一级目录加载 LISA_noise_ASD.csv
+    如果成功，将数据存储在全局变量 _LISA_NOISE_DATA 中
+    改动：预计算 Log-Log 数据以加速插值，并计算低频延拓斜率
+    """
+    global _LISA_NOISE_DATA
+    try:
+        # 获取当前脚本所在目录的上一级目录
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        file_path = os.path.join(parent_dir, 'LISA_noise_ASD.csv')
 
-    mask2 = (f >= 1.0e-3) & (f < 10 ** -2.7)
-    res[mask2] = np.power(f[mask2], -4.4) * (10 ** -50.92) * 20.0 / 3.0
+        if os.path.exists(file_path):
+            # 尝试读取
+            try:
+                data = np.loadtxt(file_path, delimiter=',')
+            except ValueError:
+                data = np.loadtxt(file_path, delimiter=',', skiprows=1)
 
-    mask3 = (f >= 10 ** -2.7) & (f < 10 ** -2.4)
-    res[mask3] = np.power(f[mask3], -8.8) * (10 ** -62.8) * 20.0 / 3.0
+            # 按第一列（频率）排序
+            sort_idx = np.argsort(data[:, 0])
+            sorted_data = data[sort_idx]
 
-    mask4 = (f >= 10 ** -2.4) & (f <= 0.01)
-    res[mask4] = np.power(f[mask4], -20.0) * (10 ** -89.68) * 20.0 / 3.0
+            # 提取频率和ASD
+            f_data = sorted_data[:, 0]
+            asd_data = sorted_data[:, 1]
 
-    return res
+            # [关键修改] 预计算 Log10 数据，用于 Log-Log 插值
+            # 加上极小值防止 log(0) 报错（虽然物理上 f 和 asd 应该都 > 0）
+            log_f = np.log10(f_data + 1e-30)
+            log_asd = np.log10(asd_data + 1e-30)
+
+            # [关键修改] 计算低频端的斜率 (Slope)，用于 Power-law 延拓
+            # 使用最左边两个点来确定延拓趋势： slope = (y2-y1)/(x2-x1)
+            # y = log(ASD), x = log(f)
+            low_f_slope = (log_asd[1] - log_asd[0]) / (log_f[1] - log_f[0])
+
+            _LISA_NOISE_DATA = {
+                'f_min': f_data[0],
+                'f_max': f_data[-1],
+                'log_f': log_f,  # 存储 log(f)
+                'log_asd': log_asd,  # 存储 log(ASD)
+                'low_f_slope': low_f_slope,  # 低频斜率
+                'log_f_0': log_f[0],  # 第一个点的 log(f)
+                'log_asd_0': log_asd[0]  # 第一个点的 log(ASD)
+            }
+            #print(f"[Info] Successfully loaded LISA noise file: {file_path}")
+        else:
+            print(f"[Info] LISA noise file not found at {file_path}. Using default analytical model.")
+    except Exception as e:
+        print(f"[Warning] Failed to load LISA noise file ({e}). Using default analytical model.")
+        _LISA_NOISE_DATA = None
+
+
+# 初始化加载
+_try_load_lisa_noise()
+
+
+# --- SNR Functions ---
+def _S_gal_N2A5_scalar(f):
+    if f >= 1.0e-5 and f < 1.0e-3: return np.power(f, -2.3) * np.power(10, -44.62) * 20.0 / 3.0
+    if f >= 1.0e-3 and f < np.power(10, -2.7): return np.power(f, -4.4) * np.power(10, -50.92) * 20.0 / 3.0
+    if f >= np.power(10, -2.7) and f < np.power(10, -2.4): return np.power(f, -8.8) * np.power(10, -62.8) * 20.0 / 3.0
+    if f >= np.power(10, -2.4) and f <= 0.01: return np.power(f, -20.0) * np.power(10, -89.68) * 20.0 / 3.0
+    return 0.0
+
+
+S_gal_N2A5 = np.vectorize(_S_gal_N2A5_scalar)
+
+
+def _S_n_lisa_original(f):
+    """原有程序的 Snf 计算方法（作为 fallback）"""
+    m1 = 5.0e9
+    m2 = sciconsts.c * 0.41 / m1 / 2.0
+    return 20.0 / 3.0 * (1 + np.power(f / m2, 2.0)) * (4.0 * (
+            9.0e-30 / np.power(2 * sciconsts.pi * f, 4.0) * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23) / np.power(m1,
+                                                                                                                2.0) + S_gal_N2A5(
+        f)
+
+
 def S_n_lisa(f):
-    # 向量化版本的噪声计算
-    m1_lisa = 5.0e9
-    m2_lisa = C_val * 0.41 / m1_lisa / 2.0
+    """
+    修改后的 Snf 计算方法 (向量化 + Log-Log 插值 + 智能延拓)：
+    1. 输入 f 转换为 log10(f)
+    2. 在 Log-Log 空间进行线性插值 (对应物理空间的 Power-law 插值)
+    3. 低频 (f < f_min): 按 log-log 斜率直线延拓
+    4. 高频 (f > f_max): ASD 设为 1.0 (Snf = 1.0)
+    """
+    if _LISA_NOISE_DATA is not None:
+        # 确保输入是数组，方便处理向量化逻辑
+        f_arr = np.atleast_1d(f)
+        # 转换为 log10(f)，防止 f=0 报错加一个极小值（虽然物理上不应有0）
+        log_f_in = np.log10(np.maximum(f_arr, 1e-30))
 
-    # 避免除以0，虽然 f 通常 > 0，但为了保险
-    # 这里假设输入 f 都是正数
+        # 1. Log-Log 插值
+        # left=NaN: 暂时不处理低频，留给后面单独处理
+        # right=0.0: 对应 ASD=1.0 (log10(1)=0)，满足高频置1的需求
+        log_asd_out = np.interp(
+            log_f_in,
+            _LISA_NOISE_DATA['log_f'],
+            _LISA_NOISE_DATA['log_asd'],
+            left=np.nan,
+            right=0.0
+        )
 
-    noise_inst = 20.0 / 3.0 * (1 + np.power(f / m2_lisa, 2.0)) * (
-            4.0 * (9.0e-30 / np.power(2 * pi * f, 4.0) * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23
-    ) / np.power(m1_lisa, 2.0)
+        # 2. 低频 Power-law 延拓处理
+        # 找到超出左边界的索引
+        # 使用 np.isnan 来定位，因为上面 interp left 设置为了 NaN
+        mask_low = np.isnan(log_asd_out)
 
-    return noise_inst + S_gal_N2A5(f)
+        if np.any(mask_low):
+            # 公式: y = y0 + slope * (x - x0)
+            log_asd_out[mask_low] = _LISA_NOISE_DATA['log_asd_0'] + \
+                                    _LISA_NOISE_DATA['low_f_slope'] * \
+                                    (log_f_in[mask_low] - _LISA_NOISE_DATA['log_f_0'])
+
+        # 3. 还原回线性空间 ASD = 10^(log_asd)
+        asd_out = np.power(10.0, log_asd_out)
+
+        # 4. 计算 Sn(f) = ASD^2
+        res = asd_out * asd_out
+
+        # 如果输入是标量，返回标量；如果是数组，返回数组
+        if np.isscalar(f):
+            return res[0]
+        return res
+    else:
+        # Fallback 到原程序方法
+        return _S_n_lisa_original(f)
 def tmerger_integral(m1, m2, a0, e0):
     m1=m1*m_sun
     m2=m2*m_sun
@@ -255,7 +356,7 @@ def SNR(m1, m2, a, e, Dl, tobs):
     if tmerger <= tobs:
         tmerger = tmerger_integral(m1/m_sun,m2/m_sun,a/AU,e)
         if tmerger <= tobs:
-            print(f"[Warning] System evolves too fast! tmerger ({tmerger:.2e}) < tobs ({tobs:.2e}).")
+            print(f"[Warning] System evolves too fast! analytical lower bound of tmerger ({tmerger:.2e} s) < tobs ({tobs:.2e} s).")
             print(f"Approximation inaccurate. Adjusting tobs to : {tmerger}")
             used_tobs = tmerger
 
@@ -786,7 +887,7 @@ def eccGW_waveform(f00, e0, timescale, m1, m2, theta, phi, R, l0=0, ts=None, PN_
 
         target_max_e = max(0.95, required_safe_e0)
         if target_max_e > limit_e: target_max_e = limit_e
-        print(f"   Fast-computation table not found. Building new table up to e={target_max_e:.6f}...")
+        print(f"   Fast-computation table not found. Building new table up to e={target_max_e}...")
 
         grid_size = 500
         split_point = max(0.9, target_max_e - 0.05)
@@ -1252,51 +1353,13 @@ def compute_LISA_response(t_src, hplus, hcross,
     else:
         raise ValueError(f"Unknown mode: {mode}. Use 'interp' or 'raw'.")
 
+
 # -----------------------------------------------------------------------------
-# Numba 加速核心计算部分 (只负责算数，不改流程)
+# Numba 加速核心计算部分 (已修改为调用全局 S_n_lisa)
 # -----------------------------------------------------------------------------
 
-@njit(cache=True)
-def get_lisa_noise_value(f):
-    """
-    计算单点 LISA 噪声值 (内部默认噪声)
-    """
-    if f <= 1.0e-9:
-        return 1.0e100
-
-    # --- S_gal_N2A50 ---
-    s_gal = 0.0
-    if f >= 1.0e-5 and f < 1.0e-3:
-        s_gal = np.power(f, -2.3) * np.power(10, -44.62) * 20.0 / 3.0
-    elif f >= 1.0e-3 and f < np.power(10, -2.7):
-        s_gal = np.power(f, -4.4) * np.power(10, -50.92) * 20.0 / 3.0
-    elif f >= np.power(10, -2.7) and f < np.power(10, -2.4):
-        s_gal = np.power(f, -8.8) * np.power(10, -62.8) * 20.0 / 3.0
-    elif f >= np.power(10, -2.4) and f <= 0.01:
-        s_gal = np.power(f, -20.0) * np.power(10, -89.68) * 20.0 / 3.0
-
-    # --- S_n_lisa ---
-    m1 = 5.0e9
-    c = 299792458.0
-    m2 = c * 0.41 / m1 / 2.0
-    pi = 3.141592653589793
-
-    term1 = 20.0 / 3.0 * (1 + np.power(f / m2, 2.0))
-    term2 = (4.0 * (9.0e-30 / np.power(2 * pi * f, 4.0) * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23)
-    s_instr = term1 * term2 / np.power(m1, 2.0)
-
-    return s_instr + s_gal
-
-
-@njit(cache=True)
-def compute_sn_vector(xs):
-    """内部生成噪声数组"""
-    n = len(xs)
-    res = np.empty(n, dtype=np.float64)
-    for i in range(n):
-        res[i] = get_lisa_noise_value(xs[i])
-    return res
-
+# [删除] get_lisa_noise_value (旧的硬编码逻辑，已弃用)
+# [删除] compute_sn_vector (旧的生成逻辑，已弃用)
 
 @njit(cache=True)
 def compute_integral_sum(h1left, h1right, h2left, h2right,
@@ -1305,18 +1368,22 @@ def compute_integral_sum(h1left, h1right, h2left, h2right,
                          snfleft, snfright,
                          xsl, xsr, phic, tobs):
     """
-    计算积分求和 (加速原代码中的 ABval2 计算)
+    计算积分求和: 4 * Re[ h1 * conj(h2) / Sn ]
+    保持 Numba 加速，因为这是纯数组运算
     """
     n = len(h1left)
     total_sum = 0.0
 
     for i in range(n):
-        # 对应原代码公式
+        # 计算被积函数的值 (梯形法则的左边点和右边点)
+        # 注意：这里 snfleft/right 是从外部传入的数组，不需要在 Numba 里计算
         term_left = 4.0 * h1left[i] * h2left[i] / snfleft[i] * np.cos(h1_angle_left[i] - (h2_angle_left[i] + phic))
         term_right = 4.0 * h1right[i] * h2right[i] / snfright[i] * np.cos(
             h1_angle_right[i] - (h2_angle_right[i] + phic))
+
         dx = xsr[i] - xsl[i]
 
+        # 梯形积分: (f(x_i) + f(x_{i+1})) * dx / 2
         total_sum += (term_left + term_right) * dx / 2.0
 
     return total_sum * tobs * tobs
@@ -1327,17 +1394,26 @@ def compute_integral_sum(h1left, h1right, h2left, h2right,
 # -----------------------------------------------------------------------------
 
 def inner_product(fs, waveform1, waveform2, phic, snf=None):
+    """
+    计算两个波形的内积 (SNR^2)。
+
+    修改说明:
+    不再在 Numba 内部计算噪声，而是直接调用全局的 S_n_lisa 函数。
+    这样既利用了 CSV 插值，又保留了 Numba 对积分的加速。
+    """
     num1 = len(waveform1)
     dt = 1.0 / fs
     tobs = num1 * dt
 
-    # 频率轴
+    # 1. 生成频率轴
+    # 注意：FFT 结果是对称的，只需取一半 (0 到 Nyquist)
     xs = np.linspace(0, fs / 2.0, num=num1 // 2)
 
-    # 1. FFT 处理
+    # 2. FFT 处理 (使用 Scipy FFT)
     hf_1 = scipy.fftpack.fft(waveform1)
     hf_1_abs = np.abs(hf_1)
     hf_1_angle = np.angle(hf_1)[0:num1 // 2]
+    # 归一化幅度
     hf_1_norm = 2.0 / num1 * hf_1_abs[0:num1 // 2]
 
     hf_2 = scipy.fftpack.fft(waveform2)
@@ -1345,21 +1421,24 @@ def inner_product(fs, waveform1, waveform2, phic, snf=None):
     hf_2_angle = np.angle(hf_2)[0:num1 // 2]
     hf_2_norm = 2.0 / num1 * hf_2_abs[0:num1 // 2]
 
-    # 2. 准备噪声 Snfvec (兼容性处理)
+    # 3. [关键修改] 生成噪声向量 Snfvec
+    # 我们直接调用顶部的 S_n_lisa 函数，它已经支持了向量化和 CSV 插值
+    # 这里的计算是在 Python/Numpy 层完成的，非常快
     if snf is None:
-        Snfvec = compute_sn_vector(xs)
+        # 默认调用全局定义的 S_n_lisa
+        Snfvec = S_n_lisa(xs)
     else:
+        # 如果用户传了自定义 snf 函数
         try:
-            # 尝试直接传数组 (假设用户函数支持向量化，这样快)
             Snfvec = snf(xs)
         except Exception:
-            # 如果报错，说明不支持向量化，改为逐点生成
             Snfvec = np.array([snf(f) for f in xs])
 
-    # 强制确保是 float64 数组，防止外部函数返回 list 或其它类型导致 numba 报错
+    # 确保类型是 float64，防止 Numba 报错
     Snfvec = np.asarray(Snfvec, dtype=np.float64)
 
-    # 3. 切片准备
+    # 4. 数据切片 (去除直流分量 index 0，因为它通常是无意义的或无限大噪声)
+    # 准备传给 Numba 的数组
     h1left = hf_1_norm[1:-1]
     h1right = hf_1_norm[2:]
     h1_angle_left = hf_1_angle[1:-1]
@@ -1376,7 +1455,16 @@ def inner_product(fs, waveform1, waveform2, phic, snf=None):
     xsl = xs[1:-1]
     xsr = xs[2:]
 
-    # 4. 计算内积 (Numba 加速)
+    # 简单检查防止 Snf 为 0 导致除零错误 (虽然 S_n_lisa 逻辑里不会返回0)
+    # 如果极小，置为一个极大值
+    mask_zero = (snfleft <= 0)
+    if np.any(mask_zero):
+        snfleft[mask_zero] = 1e100
+    mask_zero_r = (snfright <= 0)
+    if np.any(mask_zero_r):
+        snfright[mask_zero_r] = 1e100
+
+    # 5. 调用 Numba 加速的积分函数
     ABval_raw = compute_integral_sum(
         h1left, h1right, h2left, h2right,
         h1_angle_left, h1_angle_right,
@@ -1388,13 +1476,10 @@ def inner_product(fs, waveform1, waveform2, phic, snf=None):
     ABval = abs(ABval_raw)
     return ABval
 
-from scipy.optimize import brentq
+
+
 
 def GWtime(m1, m2, a1, e1):
-    # #print(m1/m_sun,m2/m_sun,a1/AU,e1)
-    #if e1 >= 1.0 or a1 <= 0: return 0.0
-    #factor = 1.6e13
-    #return factor * (2 / m1 / m2 / (m1 + m2)) * np.power(a1 / 0.1, 4.0) * np.power(1 - e1 * e1, 7 / 2)
     return tmerger_integral(m1, m2, a1, e1)
 
 
@@ -1408,7 +1493,6 @@ def peters_factor_func(e):
 
 def solve_ae_after_time(m1, m2, a0, e0, dt):
     current_life = GWtime(m1, m2, a0, e0)
-    #print(current_life,dt)
     if dt >= current_life:
         return 0.0, 0.0
     t_rem_target = current_life - dt
@@ -1422,74 +1506,74 @@ def solve_ae_after_time(m1, m2, a0, e0, dt):
     return a_curr, e_curr
 
 
-
-if __name__ == '__main__':
-    Tobs = 1 * years
-    fmax = 0.1
-    fmin = 0  # 1e-5
-    N = int(fmax * Tobs)
-    f0 = fmax / N
-    print('tobs [d]', Tobs / days, 'N', N, 'f0', f0)
-    timelist = np.linspace(0, Tobs, 2 * N - 1)
-
-    a0 = 0.01506869 * AU  # 0.1*AU#float(aeinfo[0])
-    e0 = 0.9060675000000001  # 0.96679136  # 0.999#float(aeinfo[1])
-    Dl = 8  # kpc
-    theta = 2.6590048427983772
-    phi = 5.4323352960796045
-    psi = 1.8857738911294881
-    theta2 = pi / 2  # 2.799259746842798#GWsource frame Line of sight direction
-    phi2 = pi / 4  # 1.7382600210381554
-    m1 = 8.255 * m_sun
-    m2 = 21.29 * m_sun
-    M = m1 + m2  # 29.532425000000003 * m_sun  #
-    q = min(m1, m2) / max(m1, m2)  # 0.8463054136069103  #
-    f00 = np.sqrt(M / (4 * pi * pi * np.power(a0, 3.0)))  #
-    # print(f00, '!')
-    t0 = 100  # 1 / f00 * np.power(1 - e0, 3 / 2)
-    parameternames = ['theta', 'phi', 'psi', 'forb', '1-e', 'M', 'q', 'thetatwo', 'phitwo', 't0', 'Dl']  # fakeDl
-
-    print('SNR', SNR(m1 / m_sun, m2 / m_sun, a0 / AU, e0, Dl, Tobs / years),
-          SNR_approx(m1 / m_sun, m2 / m_sun, a0 / AU, e0, Dl * 1e3 * pc, Tobs))
-
-    print('tmerger (yr)', tmerger_integral(m1 / m_sun, m2 / m_sun, a0 / AU, e0), tmerger_lower(m1, m2, a0, e0) / years)
-
-    Dim = len(parameternames)
-
-    tlist = timelist
-    parametervalue = [theta, phi, psi, f00, 1 - e0, M, q, theta2, phi2, t0, Dl]  # last item fakeDl, in the unit of kpc
-
-    a = time.time()
-    # eccGW_waveform 内部逻辑正确，但注意它是否期待无量纲 mass？
-    # 看代码开头: m1=m1*m_sun
-    # 所以必须传入无量纲 Mass (m1/m_sun)
-    hn1 = eccGW_waveform(f00, e0, Tobs / years, M / (1 + q) / m_sun, M * q / (1 + q) / m_sun, theta2, phi2, Dl)
-    # hn1 = compute_LISA_response(hn1[0],hn1[1],hn1[2],pi/4,pi/4,pi/4)
-    b = time.time()
-
-    # hn3 = eccGW_waveform(f00,e0,Tobs,M / (1 + q), M * q / (1 + q),theta2,phi2,Dl*1e3*pc)
-    c = time.time()
-
-    # [Fix] 移除 .run()，直接调用
-    if len(hn1[0]) > 1:
-        SNR2 = np.sqrt(inner_product(1 / (hn1[0][1] - hn1[0][0]), hn1[1], hn1[1], 0))
-    else:
-        SNR2 = 0
-        print("Waveform failed generation or too short.")
-
-    # hn3 = detectorresponse(parametervalue,tlist)
-    d = time.time()
-
-    ee = time.time()
-    print(b - a, c - b, d - c, 's')
-    if len(hn1[0]) > 0:
-        plt.plot(hn1[0], hn1[1], color='BLUE', label='NEW')
-        # plt.plot(hn4[0], hn4[1], color='RED', linestyle='--', label='ORIGINAL')
-        # plt.plot(hn3[0], hn3[1], color='ORANGE', linestyle=':', label='OLD')
-        # plt.plot(hn4[0], hn4[1], color='BLACK', linestyle='-.', label='OLD')
-        plt.legend()
-        plt.xlabel("t [s]", fontsize=14)
-        plt.ylabel("h", fontsize=14)
-        plt.show()
-
-    print(SNR2)
+#
+# if __name__ == '__main__':
+#     Tobs = 1 * years
+#     fmax = 0.1
+#     fmin = 0  # 1e-5
+#     N = int(fmax * Tobs)
+#     f0 = fmax / N
+#     print('tobs [d]', Tobs / days, 'N', N, 'f0', f0)
+#     timelist = np.linspace(0, Tobs, 2 * N - 1)
+#
+#     a0 = 0.01506869 * AU  # 0.1*AU#float(aeinfo[0])
+#     e0 = 0.9060675000000001  # 0.96679136  # 0.999#float(aeinfo[1])
+#     Dl = 8  # kpc
+#     theta = 2.6590048427983772
+#     phi = 5.4323352960796045
+#     psi = 1.8857738911294881
+#     theta2 = pi / 2  # 2.799259746842798#GWsource frame Line of sight direction
+#     phi2 = pi / 4  # 1.7382600210381554
+#     m1 = 8.255 * m_sun
+#     m2 = 21.29 * m_sun
+#     M = m1 + m2  # 29.532425000000003 * m_sun  #
+#     q = min(m1, m2) / max(m1, m2)  # 0.8463054136069103  #
+#     f00 = np.sqrt(M / (4 * pi * pi * np.power(a0, 3.0)))  #
+#     # print(f00, '!')
+#     t0 = 100  # 1 / f00 * np.power(1 - e0, 3 / 2)
+#     parameternames = ['theta', 'phi', 'psi', 'forb', '1-e', 'M', 'q', 'thetatwo', 'phitwo', 't0', 'Dl']  # fakeDl
+#
+#     print('SNR', SNR(m1 / m_sun, m2 / m_sun, a0 / AU, e0, Dl, Tobs / years),
+#           SNR_approx(m1 / m_sun, m2 / m_sun, a0 / AU, e0, Dl * 1e3 * pc, Tobs))
+#
+#     print('tmerger (yr)', tmerger_integral(m1 / m_sun, m2 / m_sun, a0 / AU, e0), tmerger_lower(m1, m2, a0, e0) / years)
+#
+#     Dim = len(parameternames)
+#
+#     tlist = timelist
+#     parametervalue = [theta, phi, psi, f00, 1 - e0, M, q, theta2, phi2, t0, Dl]  # last item fakeDl, in the unit of kpc
+#
+#     a = time.time()
+#     # eccGW_waveform 内部逻辑正确，但注意它是否期待无量纲 mass？
+#     # 看代码开头: m1=m1*m_sun
+#     # 所以必须传入无量纲 Mass (m1/m_sun)
+#     hn1 = eccGW_waveform(f00, e0, Tobs / years, M / (1 + q) / m_sun, M * q / (1 + q) / m_sun, theta2, phi2, Dl)
+#     # hn1 = compute_LISA_response(hn1[0],hn1[1],hn1[2],pi/4,pi/4,pi/4)
+#     b = time.time()
+#
+#     # hn3 = eccGW_waveform(f00,e0,Tobs,M / (1 + q), M * q / (1 + q),theta2,phi2,Dl*1e3*pc)
+#     c = time.time()
+#
+#     # [Fix] 移除 .run()，直接调用
+#     if len(hn1[0]) > 1:
+#         SNR2 = np.sqrt(inner_product(1 / (hn1[0][1] - hn1[0][0]), hn1[1], hn1[1], 0))
+#     else:
+#         SNR2 = 0
+#         print("Waveform failed generation or too short.")
+#
+#     # hn3 = detectorresponse(parametervalue,tlist)
+#     d = time.time()
+#
+#     ee = time.time()
+#     print(b - a, c - b, d - c, 's')
+#     if len(hn1[0]) > 0:
+#         plt.plot(hn1[0], hn1[1], color='BLUE', label='NEW')
+#         # plt.plot(hn4[0], hn4[1], color='RED', linestyle='--', label='ORIGINAL')
+#         # plt.plot(hn3[0], hn3[1], color='ORANGE', linestyle=':', label='OLD')
+#         # plt.plot(hn4[0], hn4[1], color='BLACK', linestyle='-.', label='OLD')
+#         plt.legend()
+#         plt.xlabel("t [s]", fontsize=14)
+#         plt.ylabel("h", fontsize=14)
+#         plt.show()
+#
+#     print(SNR2)

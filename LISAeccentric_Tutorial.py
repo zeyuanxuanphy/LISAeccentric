@@ -17,6 +17,7 @@ Usage:
 
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy.constants as sciconsts
 
 # Import the package directly
 import LISAeccentric
@@ -295,6 +296,86 @@ if len(gn_snapshot) > 0:
         plot=True
     )
 
-print("\n" + "="*70)
+# ==============================================================================
+# MODULE 5: NOISE MANAGEMENT (NOISE HANDLER)
+# ==============================================================================
+print("\n" + "=" * 70)
+print(">>> MODULE 5: NOISE MANAGEMENT (NOISE HANDLER)")
+print("=" * 70)
+
+# --- 5.1 Generate Synthetic Noise Data (N2A5 Model) ---
+# Goal: Create a custom noise curve on the fly to test the update functionality.
+print("\n[5.1] Generating Synthetic N2A5 Noise Data...")
+
+
+def generate_n2a5_data(f_min=1e-5, f_max=1.0, n_points=3000):
+    """Generates LISA Noise ASD based on the N2A5 foreground model."""
+    m_sun = 1.9891e30 * sciconsts.G / np.power(sciconsts.c, 3.0)
+
+    # Vectorized S_gal_N2A5
+    def S_gal_N2A5_vec(f):
+        conds = [
+            (f >= 1.0e-5) & (f < 1.0e-3),
+            (f >= 1.0e-3) & (f < 10 ** -2.7),
+            (f >= 10 ** -2.7) & (f < 10 ** -2.4),
+            (f >= 10 ** -2.4) & (f <= 0.01)
+        ]
+        funcs = [
+            lambda x: x ** -2.3 * 10 ** -44.62 * 20.0 / 3.0,
+            lambda x: x ** -4.4 * 10 ** -50.92 * 20.0 / 3.0,
+            lambda x: x ** -8.8 * 10 ** -62.8 * 20.0 / 3.0,
+            lambda x: x ** -20.0 * 10 ** -89.68 * 20.0 / 3.0
+        ]
+        return np.piecewise(f, conds, funcs + [0])
+
+    # Vectorized S_n_lisa
+    def S_n_lisa_calc(f):
+        m1 = 5.0e9
+        m2 = sciconsts.c * 0.41 / m1 / 2.0
+        term1 = 20.0 / 3.0 * (1 + (f / m2) ** 2)
+        term2 = 4.0 * (9.0e-30 / (2 * np.pi * f) ** 4 * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23
+        return term1 * term2 / m1 ** 2 + S_gal_N2A5_vec(f)
+
+    flist = np.logspace(np.log10(f_min), np.log10(f_max), n_points)
+    Sn_list = S_n_lisa_calc(flist)
+    return flist, np.sqrt(Sn_list)
+
+
+# Generate data
+f_new, asd_new = generate_n2a5_data()
+
+# Plot new noise curve
+plt.figure(figsize=(8, 5))
+plt.loglog(f_new, asd_new, label='Generated N2A5 Model', color='darkred')
+plt.title("Synthetic N2A5 Noise Curve (Ready to Update)")
+plt.xlabel("Frequency [Hz]")
+plt.ylabel("ASD [1/sqrt(Hz)]")
+plt.grid(True, which='both', linestyle='--', alpha=0.5)
+plt.legend()
+plt.show()
+
+# --- 5.2 Update Noise Curve ---
+# Goal: Update 'LISA_noise_ASD.csv' with the new data.
+# The core function will print the "Restart Kernel" warning automatically.
+print("\n[5.2] Updating System Noise Curve...")
+#LISAeccentric.Noise.update_noise_curve([f_new, asd_new])
+
+# --- 5.3 Recover Noise Curve ---
+# Goal: Demonstrate how to revert to previous versions or presets.
+
+# A. Revert to the specific backup version (e.g., 1)
+print("\n[5.3] Testing Recovery: Revert to backup #1...")
+LISAeccentric.Noise.recover_noise_curve(version=1)
+
+# B. Load 'Official' Preset
+print("\n[5.4] Testing Recovery: Load 'Official' preset...")
+LISAeccentric.Noise.recover_noise_curve(version='official')
+
+noiselist=LISAeccentric.Noise.get_noise_curve(plot=True)
+print(noiselist[0][:3],noiselist[1][:3])
+
+LISAeccentric.Noise.clean_backups()
+
+print("\n" + "=" * 70)
 print("TUTORIAL COMPLETED SUCCESSFULLY")
-print("="*70)
+print("=" * 70)
