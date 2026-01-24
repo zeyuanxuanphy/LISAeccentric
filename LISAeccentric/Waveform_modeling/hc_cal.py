@@ -60,62 +60,83 @@ def h(a, e, n, m1, m2, Dl):
     return result
 
 
+# ==============================================================================
+# Unified Noise Handling (Log-Log Interpolation & Injection Support)
+# ==============================================================================
+
 # --- Global Noise Data Storage ---
 _LISA_NOISE_DATA = None
 
 
 def _try_load_lisa_noise():
     """
-    尝试从程序所在文件夹的上一级目录加载 LISA_noise_ASD.csv
-    如果成功，将数据存储在全局变量 _LISA_NOISE_DATA 中
-    改动：预计算 Log-Log 数据以加速插值，并计算低频延拓斜率
+    尝试加载 LISA_noise_ASD.csv。
+    支持 Log-Log 预计算，并兼容 core.py 的注入机制。
+    自动搜索当前目录和上一级目录。
     """
     global _LISA_NOISE_DATA
     try:
-        # 获取当前脚本所在目录的上一级目录
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        parent_dir = os.path.dirname(current_dir)
-        file_path = os.path.join(parent_dir, 'LISA_noise_ASD.csv')
 
-        if os.path.exists(file_path):
+        # 搜索路径策略：先找当前目录，再找上一级目录（兼容不同包结构）
+        possible_paths = [
+            os.path.join(current_dir, 'LISA_noise_ASD.csv'),
+            os.path.join(os.path.dirname(current_dir), 'LISA_noise_ASD.csv')
+        ]
+
+        file_path = None
+        for p in possible_paths:
+            if os.path.exists(p):
+                file_path = p
+                break
+
+        if file_path:
             # 尝试读取
             try:
                 data = np.loadtxt(file_path, delimiter=',')
             except ValueError:
                 data = np.loadtxt(file_path, delimiter=',', skiprows=1)
 
-            # 按第一列（频率）排序
+            # 1. 排序与清洗
             sort_idx = np.argsort(data[:, 0])
             sorted_data = data[sort_idx]
 
-            # 提取频率和ASD
             f_data = sorted_data[:, 0]
             asd_data = sorted_data[:, 1]
 
-            # [关键修改] 预计算 Log10 数据，用于 Log-Log 插值
-            # 加上极小值防止 log(0) 报错（虽然物理上 f 和 asd 应该都 > 0）
-            log_f = np.log10(f_data + 1e-30)
-            log_asd = np.log10(asd_data + 1e-30)
+            # 过滤非正值
+            mask = (f_data > 0) & (asd_data > 0)
+            f_data = f_data[mask]
+            asd_data = asd_data[mask]
 
-            # [关键修改] 计算低频端的斜率 (Slope)，用于 Power-law 延拓
-            # 使用最左边两个点来确定延拓趋势： slope = (y2-y1)/(x2-x1)
-            # y = log(ASD), x = log(f)
-            low_f_slope = (log_asd[1] - log_asd[0]) / (log_f[1] - log_f[0])
+            # 2. 预计算 Log10 数据 (用于 Log-Log 插值)
+            log_f = np.log10(f_data)
+            log_asd = np.log10(asd_data)
+
+            # 3. 计算低频延拓斜率 (Slope)
+            # y = kx + b -> slope = (y1-y0)/(x1-x0)
+            if len(log_f) >= 2:
+                low_f_slope = (log_asd[1] - log_asd[0]) / (log_f[1] - log_f[0])
+            else:
+                low_f_slope = -2.5  # Fallback default
 
             _LISA_NOISE_DATA = {
                 'f_min': f_data[0],
                 'f_max': f_data[-1],
                 'log_f': log_f,  # 存储 log(f)
                 'log_asd': log_asd,  # 存储 log(ASD)
-                'low_f_slope': low_f_slope,  # 低频斜率
-                'log_f_0': log_f[0],  # 第一个点的 log(f)
-                'log_asd_0': log_asd[0]  # 第一个点的 log(ASD)
+                'low_f_slope': low_f_slope,
+                'log_f_0': log_f[0],
+                'log_asd_0': log_asd[0],
+                'use_file': True  # 标记位
             }
-            #print(f"[Info] Successfully loaded LISA noise file: {file_path}")
+            # print(f"[Info] Loaded LISA noise from {os.path.basename(file_path)}")
         else:
-            print(f"[Info] LISA noise file not found at {file_path}. Using default analytical model.")
+            print(f"[Warning] LISA noise file not found. Using analytical fallback.")
+            _LISA_NOISE_DATA = None
+
     except Exception as e:
-        print(f"[Warning] Failed to load LISA noise file ({e}). Using default analytical model.")
+        print(f"[Warning] Failed to load LISA noise file ({e}). Using analytical fallback.")
         _LISA_NOISE_DATA = None
 
 
@@ -124,11 +145,13 @@ _try_load_lisa_noise()
 
 
 # --- SNR Functions ---
+
 def _S_gal_N2A5_scalar(f):
-    if f >= 1.0e-5 and f < 1.0e-3: return np.power(f, -2.3) * np.power(10, -44.62) * 20.0 / 3.0
-    if f >= 1.0e-3 and f < np.power(10, -2.7): return np.power(f, -4.4) * np.power(10, -50.92) * 20.0 / 3.0
-    if f >= np.power(10, -2.7) and f < np.power(10, -2.4): return np.power(f, -8.8) * np.power(10, -62.8) * 20.0 / 3.0
-    if f >= np.power(10, -2.4) and f <= 0.01: return np.power(f, -20.0) * np.power(10, -89.68) * 20.0 / 3.0
+    # Analytical Galactic Background (N2A5 Model)
+    if f >= 1.0e-5 and f < 1.0e-3: return np.power(f, -2.3) * 10 ** -44.62 * 20.0 / 3.0
+    if f >= 1.0e-3 and f < 10 ** -2.7: return np.power(f, -4.4) * 10 ** -50.92 * 20.0 / 3.0
+    if f >= 10 ** -2.7 and f < 10 ** -2.4: return np.power(f, -8.8) * 10 ** -62.8 * 20.0 / 3.0
+    if f >= 10 ** -2.4 and f <= 0.01: return np.power(f, -20.0) * 10 ** -89.68 * 20.0 / 3.0
     return 0.0
 
 
@@ -136,32 +159,28 @@ S_gal_N2A5 = np.vectorize(_S_gal_N2A5_scalar)
 
 
 def _S_n_lisa_original(f):
-    """原有程序的 Snf 计算方法（作为 fallback）"""
+    """Fallback Analytical Model (Robson+19 / N2A5)"""
     m1 = 5.0e9
     m2 = sciconsts.c * 0.41 / m1 / 2.0
-    return 20.0 / 3.0 * (1 + np.power(f / m2, 2.0)) * (4.0 * (
-            9.0e-30 / np.power(2 * sciconsts.pi * f, 4.0) * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23) / np.power(m1,
-                                                                                                                2.0) + S_gal_N2A5(
-        f)
+    term_inst = 20.0 / 3.0 * (1 + (f / m2) ** 2) * (
+                4.0 * (9.0e-30 / (2 * pi * f) ** 4 * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23) / m1 ** 2
+    return term_inst + S_gal_N2A5(f)
 
 
 def S_n_lisa(f):
     """
-    修改后的 Snf 计算方法 (向量化 + Log-Log 插值 + 智能延拓)：
-    1. 输入 f 转换为 log10(f)
-    2. 在 Log-Log 空间进行线性插值 (对应物理空间的 Power-law 插值)
-    3. 低频 (f < f_min): 按 log-log 斜率直线延拓
-    4. 高频 (f > f_max): ASD 设为 1.0 (Snf = 1.0)
+    Unified Noise Calculator:
+    1. Checks if file/injected data exists in _LISA_NOISE_DATA.
+    2. If yes -> Log-Log Interpolation with Slope Extrapolation.
+    3. If no  -> Fallback to analytical formula.
     """
-    if _LISA_NOISE_DATA is not None:
-        # 确保输入是数组，方便处理向量化逻辑
+    if _LISA_NOISE_DATA is not None and _LISA_NOISE_DATA.get('use_file', False):
         f_arr = np.atleast_1d(f)
-        # 转换为 log10(f)，防止 f=0 报错加一个极小值（虽然物理上不应有0）
+        # Convert to Log space (protect against f<=0)
         log_f_in = np.log10(np.maximum(f_arr, 1e-30))
 
-        # 1. Log-Log 插值
-        # left=NaN: 暂时不处理低频，留给后面单独处理
-        # right=0.0: 对应 ASD=1.0 (log10(1)=0)，满足高频置1的需求
+        # 1. Log-Log Interpolation
+        # left=NaN (handle later), right=0.0 (ASD=1.0 for high freq)
         log_asd_out = np.interp(
             log_f_in,
             _LISA_NOISE_DATA['log_f'],
@@ -170,29 +189,20 @@ def S_n_lisa(f):
             right=0.0
         )
 
-        # 2. 低频 Power-law 延拓处理
-        # 找到超出左边界的索引
-        # 使用 np.isnan 来定位，因为上面 interp left 设置为了 NaN
+        # 2. Handle Low Frequency Extrapolation (Slope)
         mask_low = np.isnan(log_asd_out)
-
         if np.any(mask_low):
-            # 公式: y = y0 + slope * (x - x0)
             log_asd_out[mask_low] = _LISA_NOISE_DATA['log_asd_0'] + \
                                     _LISA_NOISE_DATA['low_f_slope'] * \
                                     (log_f_in[mask_low] - _LISA_NOISE_DATA['log_f_0'])
 
-        # 3. 还原回线性空间 ASD = 10^(log_asd)
+        # 3. Convert back to Linear ASD and square to get Sn(f)
         asd_out = np.power(10.0, log_asd_out)
-
-        # 4. 计算 Sn(f) = ASD^2
         res = asd_out * asd_out
 
-        # 如果输入是标量，返回标量；如果是数组，返回数组
-        if np.isscalar(f):
-            return res[0]
+        if np.isscalar(f): return res[0]
         return res
     else:
-        # Fallback 到原程序方法
         return _S_n_lisa_original(f)
 
 def chirp_mass(m1, m2):
@@ -267,16 +277,16 @@ def _core_calculator(args):
 # 3. 封装接口
 # ==========================================
 
-def calculate_single_system(m1, m2, a, e, Dl, tobs_years=1.0, target_max_points=20000, verbose=True):
+def calculate_single_system(m1, m2, a, e, Dl, tobs=1.0*years, target_max_points=20000, verbose=True):
     """
     接口1: 单个系统计算
     默认: verbose=True (允许打印), target_max_points=20000 (高精度)
     """
-    m1_si = m1 * m_sun
-    m2_si = m2 * m_sun
-    a_si = a * AU
-    Dl_si = Dl * 1e3 * pc
-    tobs_si = tobs_years * years
+    m1_si = m1
+    m2_si = m2
+    a_si = a
+    Dl_si = Dl
+    tobs_si = tobs
 
     # 传入 verbose=True
     args = (m1_si, m2_si, a_si, e, Dl_si, tobs_si, target_max_points, verbose)
@@ -285,14 +295,14 @@ def calculate_single_system(m1, m2, a, e, Dl, tobs_years=1.0, target_max_points=
     return [fn, hc_avg, hnc, snf]
 
 
-def process_population_batch(system_list_raw, tobs_years=1.0, n_cores=1, target_max_points=1000):
+def process_population_batch(system_list_raw, tobs=1.0*years, n_cores=1, target_max_points=1000):
     """
     接口2: 批量处理系统
     强制: verbose=False (在 batch 内部屏蔽所有打印), target_max_points 默认为 1000 (低精度/高速度)
     """
 
     pool_args = []
-    tobs_si = tobs_years * years
+    tobs_si = tobs
 
     # 强制静默
     batch_verbose = False
@@ -432,37 +442,37 @@ def plot_simulation_results(simulation_result_list,xlim=[1e-6,1],ylim=[1e-24, 1e
     plt.show()
 
 
-# ==========================================
-# Main Execution
-# ==========================================
-
-if __name__ == '__main__':
-    try:
-        from GN_modeling import GN_BBH
-
-        snapshot_data = GN_BBH.generate_snapshot_population(Gamma_rep=1.0, ync_age=6.0e6, ync_count=100, max_bh_mass=50)
-    except ImportError:
-        print("Creating dummy data...")
-        snapshot_data = []
-        for i in range(100):
-            snapshot_data.append([
-                i,
-                8.0,  # Dl
-                random.uniform(0.1, 2.0),  # a
-                random.uniform(0.1, 0.9),  # e
-                random.uniform(10, 50),  # m1
-                random.uniform(10, 50)  # m2
-            ])
-
-    print(f"Input system list length: {len(snapshot_data)}")
-
-    # 1. 单个测试
-    test_res = calculate_single_system(m1=30, m2=30, a=0.5, e=0.6, Dl=8.0)
-    print(f"Single test run produced {len(test_res[0])} harmonics.")
-
-    # 2. 批量处理
-    # 返回值包含：faxis, Snf, fn_lists, hcavg_lists, hnc_lists
-    batch_results = process_population_batch(snapshot_data, tobs_years=1.0, n_cores=6)
-
-    # 3. 绘图
-    plot_simulation_results(batch_results)
+# # ==========================================
+# # Main Execution
+# # ==========================================
+#
+# if __name__ == '__main__':
+#     try:
+#         from GN_modeling import GN_BBH
+#
+#         snapshot_data = GN_BBH.generate_snapshot_population(Gamma_rep=1.0, ync_age=6.0e6, ync_count=100, max_bh_mass=50)
+#     except ImportError:
+#         print("Creating dummy data...")
+#         snapshot_data = []
+#         for i in range(100):
+#             snapshot_data.append([
+#                 i,
+#                 8.0,  # Dl
+#                 random.uniform(0.1, 2.0),  # a
+#                 random.uniform(0.1, 0.9),  # e
+#                 random.uniform(10, 50),  # m1
+#                 random.uniform(10, 50)  # m2
+#             ])
+#
+#     print(f"Input system list length: {len(snapshot_data)}")
+#
+#     # 1. 单个测试
+#     test_res = calculate_single_system(m1=30, m2=30, a=0.5, e=0.6, Dl=8.0)
+#     print(f"Single test run produced {len(test_res[0])} harmonics.")
+#
+#     # 2. 批量处理
+#     # 返回值包含：faxis, Snf, fn_lists, hcavg_lists, hnc_lists
+#     batch_results = process_population_batch(snapshot_data, tobs_years=1.0, n_cores=6)
+#
+#     # 3. 绘图
+#     plot_simulation_results(batch_results)

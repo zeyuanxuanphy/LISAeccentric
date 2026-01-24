@@ -9,23 +9,122 @@ from scipy.optimize import brentq
 import copy
 import random
 import os
-
+from scipy.interpolate import PchipInterpolator  # [新增] 用于快速插值
+from scipy.integrate import quad
+from numba import njit
+import scipy
 # ==========================================
 # 1. Physical Constants Definition
 # ==========================================
-pi = sciconsts.pi
 m_sun_sec = 1.9891e30 * sciconsts.G / np.power(sciconsts.c, 3.0)
 AU_sec = sciconsts.au / sciconsts.c
 pc_sec = 3.261 * sciconsts.light_year / sciconsts.c
 year_sec = 365 * 24 * 3600.0
 day_sec = 24 * 3600.0
-
+CONST_G = sciconsts.G
+CONST_c = sciconsts.c
+CONST_pi = sciconsts.pi
+CONST_au = sciconsts.au
+m_sun = 1.98840987e30 * CONST_G / np.power(CONST_c, 3.0)
+years = 365 * 24 * 3600.0
+days = 24 * 3600
+pc = 3.261 * sciconsts.light_year / CONST_c
+AU = CONST_au / CONST_c
+gama = 0.577215664901532860606512090082402431042159335
+pi=sciconsts.pi
+C_val = sciconsts.c
 
 # ==========================================
 # 2. Evolutionary Physics Functions
 # ==========================================
+class MergerTimeAccelerator:
+    """
+    预计算 Peters (1964) 积分因子的插值表。
+    支持磁盘缓存：首次运行会计算并保存为 .npz 文件，之后直接读取。
+    """
 
+    def __init__(self, cache_file='merger_time_table.npz'):
+        self.cache_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), cache_file)
+
+        # 尝试加载缓存
+        if self._load_cache():
+            pass
+            #print(f"[System] Loaded merger time table from {self.cache_file}")
+        else:
+            print("[System] Computing merger time table (first time run)...")
+            self._compute_and_save_table()
+            print(f"[System] Table computed and saved to {self.cache_file}")
+
+        # 使用 Pchip 插值 (保单调性)
+        self.interpolator = PchipInterpolator(self.e_grid, self.f_vals)
+
+    def _compute_and_save_table(self):
+        # 使用对数分布采样 e，重点加密 e->1 的区域
+        # x 从 0 到 5, e = 1 - 10^-x
+        x_vals = np.linspace(0, 5, 2000)
+        self.e_grid = 1.0 - np.power(10, -x_vals)
+        self.e_grid[0] = 0.0  # 修正第一个点完全为0
+
+        # 计算对应的无量纲因子 F(e)
+        self.f_vals = np.array([self._compute_dimensionless_factor(e) for e in self.e_grid])
+
+        # 保存到磁盘
+        np.savez(self.cache_file, e_grid=self.e_grid, f_vals=self.f_vals)
+
+    def _load_cache(self):
+        if not os.path.exists(self.cache_file):
+            return False
+        try:
+            data = np.load(self.cache_file)
+            self.e_grid = data['e_grid']
+            self.f_vals = data['f_vals']
+            return True
+        except Exception as e:
+            print(f"[Warning] Failed to load cache: {e}")
+            return False
+
+    def _compute_dimensionless_factor(self, e0):
+        """核心积分逻辑 (与原代码一致，但只计算无量纲部分)"""
+        if e0 < 1e-6: return 1.0
+
+        term_c0 = np.power(e0, 12.0 / 19.0) * np.power(1 + 121.0 / 304.0 * e0 ** 2, 870.0 / 2299.0)
+        c0_norm = (1 - e0 ** 2) / term_c0
+
+        def integrand(e):
+            numer = np.power(e, 29.0 / 19.0) * np.power(1 + 121.0 / 304.0 * e ** 2, 1181.0 / 2299.0)
+            denom = np.power(1 - e ** 2, 1.5)
+            return numer / denom
+
+        integral_val, _ = quad(integrand, 0, e0)
+
+        # Factor = (48/19) * (c0/a)^4 * I
+        return (48.0 / 19.0) * np.power(c0_norm, 4.0) * integral_val
+
+    def get_factor(self, e):
+        # 处理边界和解析延拓
+        if e < 1e-4: return 1.0
+        # 修正系数为 768/425
+        if e > 0.99999:
+            return (768.0 / 425.0) * np.power(1 - e ** 2, 3.5)
+        return self.interpolator(e)
+# 初始化全局加速器实例
+_ACCELERATOR = MergerTimeAccelerator()
+# tmerger 函数保持不变，直接调用 _ACCELERATOR.get_factor
+def tmerger_integral(m1, m2, a0, e0):
+    beta = 64.0 / 5.0 * m1 * m2 * (m1 + m2)
+    if beta == 0: return 1e99
+
+    t_circ = np.power(a0, 4.0) / (4.0 * beta)
+
+    if np.isscalar(e0):
+        factor = _ACCELERATOR.get_factor(e0)
+    else:
+        factor = np.array([_ACCELERATOR.get_factor(e) for e in e0])
+
+    return t_circ * factor
 def GWtime(m1, m2, a1, e1):
+    return tmerger_integral(m1, m2, a1, e1)
+def GWtime_old(m1, m2, a1, e1):
     if e1 >= 1.0 or a1 <= 0: return 0.0
     factor = 1.6e13
     return factor * (2 / m1 / m2 / (m1 + m2)) * np.power(a1 / 0.1, 4.0) * np.power(1 - e1 * e1, 7 / 2)
@@ -54,62 +153,83 @@ def solve_ae_after_time(m1, m2, a0, e0, dt):
     return a_curr, e_curr
 
 
+# ==============================================================================
+# Unified Noise Handling (Log-Log Interpolation & Injection Support)
+# ==============================================================================
+
 # --- Global Noise Data Storage ---
 _LISA_NOISE_DATA = None
 
 
 def _try_load_lisa_noise():
     """
-    尝试从程序所在文件夹的上一级目录加载 LISA_noise_ASD.csv
-    如果成功，将数据存储在全局变量 _LISA_NOISE_DATA 中
-    改动：预计算 Log-Log 数据以加速插值，并计算低频延拓斜率
+    尝试加载 LISA_noise_ASD.csv。
+    支持 Log-Log 预计算，并兼容 core.py 的注入机制。
+    自动搜索当前目录和上一级目录。
     """
     global _LISA_NOISE_DATA
     try:
-        # 获取当前脚本所在目录的上一级目录
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        parent_dir = os.path.dirname(current_dir)
-        file_path = os.path.join(parent_dir, 'LISA_noise_ASD.csv')
 
-        if os.path.exists(file_path):
+        # 搜索路径策略：先找当前目录，再找上一级目录（兼容不同包结构）
+        possible_paths = [
+            os.path.join(current_dir, 'LISA_noise_ASD.csv'),
+            os.path.join(os.path.dirname(current_dir), 'LISA_noise_ASD.csv')
+        ]
+
+        file_path = None
+        for p in possible_paths:
+            if os.path.exists(p):
+                file_path = p
+                break
+
+        if file_path:
             # 尝试读取
             try:
                 data = np.loadtxt(file_path, delimiter=',')
             except ValueError:
                 data = np.loadtxt(file_path, delimiter=',', skiprows=1)
 
-            # 按第一列（频率）排序
+            # 1. 排序与清洗
             sort_idx = np.argsort(data[:, 0])
             sorted_data = data[sort_idx]
 
-            # 提取频率和ASD
             f_data = sorted_data[:, 0]
             asd_data = sorted_data[:, 1]
 
-            # [关键修改] 预计算 Log10 数据，用于 Log-Log 插值
-            # 加上极小值防止 log(0) 报错（虽然物理上 f 和 asd 应该都 > 0）
-            log_f = np.log10(f_data + 1e-30)
-            log_asd = np.log10(asd_data + 1e-30)
+            # 过滤非正值
+            mask = (f_data > 0) & (asd_data > 0)
+            f_data = f_data[mask]
+            asd_data = asd_data[mask]
 
-            # [关键修改] 计算低频端的斜率 (Slope)，用于 Power-law 延拓
-            # 使用最左边两个点来确定延拓趋势： slope = (y2-y1)/(x2-x1)
-            # y = log(ASD), x = log(f)
-            low_f_slope = (log_asd[1] - log_asd[0]) / (log_f[1] - log_f[0])
+            # 2. 预计算 Log10 数据 (用于 Log-Log 插值)
+            log_f = np.log10(f_data)
+            log_asd = np.log10(asd_data)
+
+            # 3. 计算低频延拓斜率 (Slope)
+            # y = kx + b -> slope = (y1-y0)/(x1-x0)
+            if len(log_f) >= 2:
+                low_f_slope = (log_asd[1] - log_asd[0]) / (log_f[1] - log_f[0])
+            else:
+                low_f_slope = -2.5  # Fallback default
 
             _LISA_NOISE_DATA = {
                 'f_min': f_data[0],
                 'f_max': f_data[-1],
                 'log_f': log_f,  # 存储 log(f)
                 'log_asd': log_asd,  # 存储 log(ASD)
-                'low_f_slope': low_f_slope,  # 低频斜率
-                'log_f_0': log_f[0],  # 第一个点的 log(f)
-                'log_asd_0': log_asd[0]  # 第一个点的 log(ASD)
+                'low_f_slope': low_f_slope,
+                'log_f_0': log_f[0],
+                'log_asd_0': log_asd[0],
+                'use_file': True  # 标记位
             }
-            #print(f"[Info] Successfully loaded LISA noise file: {file_path}")
+            # print(f"[Info] Loaded LISA noise from {os.path.basename(file_path)}")
         else:
-            print(f"[Info] LISA noise file not found at {file_path}. Using default analytical model.")
+            print(f"[Warning] LISA noise file not found. Using analytical fallback.")
+            _LISA_NOISE_DATA = None
+
     except Exception as e:
-        print(f"[Warning] Failed to load LISA noise file ({e}). Using default analytical model.")
+        print(f"[Warning] Failed to load LISA noise file ({e}). Using analytical fallback.")
         _LISA_NOISE_DATA = None
 
 
@@ -118,11 +238,13 @@ _try_load_lisa_noise()
 
 
 # --- SNR Functions ---
+
 def _S_gal_N2A5_scalar(f):
-    if f >= 1.0e-5 and f < 1.0e-3: return np.power(f, -2.3) * np.power(10, -44.62) * 20.0 / 3.0
-    if f >= 1.0e-3 and f < np.power(10, -2.7): return np.power(f, -4.4) * np.power(10, -50.92) * 20.0 / 3.0
-    if f >= np.power(10, -2.7) and f < np.power(10, -2.4): return np.power(f, -8.8) * np.power(10, -62.8) * 20.0 / 3.0
-    if f >= np.power(10, -2.4) and f <= 0.01: return np.power(f, -20.0) * np.power(10, -89.68) * 20.0 / 3.0
+    # Analytical Galactic Background (N2A5 Model)
+    if f >= 1.0e-5 and f < 1.0e-3: return np.power(f, -2.3) * 10 ** -44.62 * 20.0 / 3.0
+    if f >= 1.0e-3 and f < 10 ** -2.7: return np.power(f, -4.4) * 10 ** -50.92 * 20.0 / 3.0
+    if f >= 10 ** -2.7 and f < 10 ** -2.4: return np.power(f, -8.8) * 10 ** -62.8 * 20.0 / 3.0
+    if f >= 10 ** -2.4 and f <= 0.01: return np.power(f, -20.0) * 10 ** -89.68 * 20.0 / 3.0
     return 0.0
 
 
@@ -130,32 +252,28 @@ S_gal_N2A5 = np.vectorize(_S_gal_N2A5_scalar)
 
 
 def _S_n_lisa_original(f):
-    """原有程序的 Snf 计算方法（作为 fallback）"""
+    """Fallback Analytical Model (Robson+19 / N2A5)"""
     m1 = 5.0e9
     m2 = sciconsts.c * 0.41 / m1 / 2.0
-    return 20.0 / 3.0 * (1 + np.power(f / m2, 2.0)) * (4.0 * (
-            9.0e-30 / np.power(2 * sciconsts.pi * f, 4.0) * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23) / np.power(m1,
-                                                                                                                2.0) + S_gal_N2A5(
-        f)
+    term_inst = 20.0 / 3.0 * (1 + (f / m2) ** 2) * (
+                4.0 * (9.0e-30 / (2 * pi * f) ** 4 * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23) / m1 ** 2
+    return term_inst + S_gal_N2A5(f)
 
 
 def S_n_lisa(f):
     """
-    修改后的 Snf 计算方法 (向量化 + Log-Log 插值 + 智能延拓)：
-    1. 输入 f 转换为 log10(f)
-    2. 在 Log-Log 空间进行线性插值 (对应物理空间的 Power-law 插值)
-    3. 低频 (f < f_min): 按 log-log 斜率直线延拓
-    4. 高频 (f > f_max): ASD 设为 1.0 (Snf = 1.0)
+    Unified Noise Calculator:
+    1. Checks if file/injected data exists in _LISA_NOISE_DATA.
+    2. If yes -> Log-Log Interpolation with Slope Extrapolation.
+    3. If no  -> Fallback to analytical formula.
     """
-    if _LISA_NOISE_DATA is not None:
-        # 确保输入是数组，方便处理向量化逻辑
+    if _LISA_NOISE_DATA is not None and _LISA_NOISE_DATA.get('use_file', False):
         f_arr = np.atleast_1d(f)
-        # 转换为 log10(f)，防止 f=0 报错加一个极小值（虽然物理上不应有0）
+        # Convert to Log space (protect against f<=0)
         log_f_in = np.log10(np.maximum(f_arr, 1e-30))
 
-        # 1. Log-Log 插值
-        # left=NaN: 暂时不处理低频，留给后面单独处理
-        # right=0.0: 对应 ASD=1.0 (log10(1)=0)，满足高频置1的需求
+        # 1. Log-Log Interpolation
+        # left=NaN (handle later), right=0.0 (ASD=1.0 for high freq)
         log_asd_out = np.interp(
             log_f_in,
             _LISA_NOISE_DATA['log_f'],
@@ -164,33 +282,245 @@ def S_n_lisa(f):
             right=0.0
         )
 
-        # 2. 低频 Power-law 延拓处理
-        # 找到超出左边界的索引
-        # 使用 np.isnan 来定位，因为上面 interp left 设置为了 NaN
+        # 2. Handle Low Frequency Extrapolation (Slope)
         mask_low = np.isnan(log_asd_out)
-
         if np.any(mask_low):
-            # 公式: y = y0 + slope * (x - x0)
             log_asd_out[mask_low] = _LISA_NOISE_DATA['log_asd_0'] + \
                                     _LISA_NOISE_DATA['low_f_slope'] * \
                                     (log_f_in[mask_low] - _LISA_NOISE_DATA['log_f_0'])
 
-        # 3. 还原回线性空间 ASD = 10^(log_asd)
+        # 3. Convert back to Linear ASD and square to get Sn(f)
         asd_out = np.power(10.0, log_asd_out)
-
-        # 4. 计算 Sn(f) = ASD^2
         res = asd_out * asd_out
 
-        # 如果输入是标量，返回标量；如果是数组，返回数组
-        if np.isscalar(f):
-            return res[0]
+        if np.isscalar(f): return res[0]
         return res
     else:
-        # Fallback 到原程序方法
         return _S_n_lisa_original(f)
 
+def forb(M, a):
+    return 1.0 / 2.0 / pi * np.sqrt(M) * np.power(a, -1.5)
+def J(n, x):
+    # scipy.special.jv 原生支持数组输入
+    return scipy.special.jv(n, x)
+def g(n, e):
+    # n 可以是数组，e 是标量
+    # 这里所有的计算都会自动广播 (Broadcasting)
+    ne = n * e
 
-def SNR_analytical_geo(m1_sol, m2_sol, a_au, e, tobs_yr, Dl_kpc):
+    term1 = J(n - 2, ne) - 2 * e * J(n - 1, ne) + 2 / n * J(n, ne) + 2 * e * J(n + 1, ne) - J(n + 2, ne)
+    term2 = J(n - 2, ne) - 2 * J(n, ne) + J(n + 2, ne)
+    term3 = J(n, ne)
+
+    # 注意：n**4 可能会很大，但在 float64 下通常没问题
+    result = np.power(n, 4.0) / 32.0 * (
+            np.power(term1, 2.0) +
+            (1 - e * e) * np.power(term2, 2.0) +
+            4.0 / (3.0 * n * n) * np.power(term3, 2.0)
+    )
+    return result
+def h0(a, m1, m2, Dl):
+    return np.sqrt(32 / 5) * m1 * m2 / Dl / a
+@njit(fastmath=True, cache=True)
+def _get_sn_val_jit(f, use_file, log_f_grid, log_asd_grid, low_f_slope, log_f_0, log_asd_0):
+    """
+    JIT-friendly noise calculator (Scalar Version)
+    Matches logic of S_n_lisa exactly but runs inside Numba.
+    """
+    if not use_file:
+        # Fallback Analytical
+        m1_a = 5.0e9
+        m2_a = CONST_c * 0.41 / m1_a / 2.0
+
+        # S_gal part
+        gal_res = 0.0
+        if f >= 1.0e-5 and f < 1.0e-3:
+            gal_res = np.power(f, -2.3) * 10 ** (-44.62) * 20.0 / 3.0
+        elif f >= 1.0e-3 and f < 10 ** (-2.7):
+            gal_res = np.power(f, -4.4) * 10 ** (-50.92) * 20.0 / 3.0
+        elif f >= 10 ** (-2.7) and f < 10 ** (-2.4):
+            gal_res = np.power(f, -8.8) * 10 ** (-62.8) * 20.0 / 3.0
+        elif f >= 10 ** (-2.4) and f <= 0.01:
+            gal_res = np.power(f, -20.0) * 10 ** (-89.68) * 20.0 / 3.0
+
+        term1 = 20.0 / 3.0 * (1.0 + np.power(f / m2_a, 2.0))
+        term2_inner = 9.0e-30 / np.power(2 * CONST_pi * f, 4.0) * (1.0 + 1.0e-4 / f)
+        term2 = 4.0 * term2_inner + 2.96e-23 + 2.65e-23
+
+        return term1 * term2 / np.power(m1_a, 2.0) + gal_res
+
+    else:
+        # Interpolation Logic
+        f_safe = max(f, 1e-30)
+        log_f_in = np.log10(f_safe)
+
+        if log_f_in < log_f_grid[0]:
+            log_asd = log_asd_0 + low_f_slope * (log_f_in - log_f_0)
+        elif log_f_in > log_f_grid[-1]:
+            log_asd = 0.0  # ASD = 1.0 -> log = 0
+        else:
+            log_asd = np.interp(log_f_in, log_f_grid, log_asd_grid)
+
+        asd = 10.0 ** log_asd
+        return asd * asd
+@njit(fastmath=True, cache=True)
+def _dSNR_high_E_kernel(f_arr, n_vals, g_vals, delta_log_f, use_file, log_f, log_asd, slope, lf0, lasd0):
+    """
+    修改说明：
+    1. 参数 deltaf 变为 delta_log_f
+    2. 积分公式变更：
+       原积分: Integral[ g / (f^2 * Sn) * df ]
+       变量代换: df = f * d(ln f)
+       新积分: Integral[ g / (f^2 * Sn) * f * d(ln f) ] = Integral[ g / (f * Sn) * d(ln f) ]
+    """
+    total = 0.0
+    n_len = len(f_arr)
+
+    for i in range(n_len):
+        n = n_vals[i]
+        if n > 0:
+            f = f_arr[i]
+            sn = _get_sn_val_jit(f, use_file, log_f, log_asd, slope, lf0, lasd0)
+
+            if sn > 0:
+                g = g_vals[i]
+                # 修改点：除数从 f*f 改为 f，因为 df = f * d(log_f)
+                term = g / (f * sn)
+                total += term
+
+    return total * delta_log_f
+@njit(fastmath=True, cache=True)
+def _dSNR_low_E_kernel(n_arr, g_vals, forb_val, h0_val, use_file, log_f, log_asd, slope, lf0, lasd0):
+    # 低偏心率部分保持不变
+    total = 0.0
+    n_len = len(n_arr)
+
+    # Precompute constant: 8 * h0^2
+    const_num = 8.0 * h0_val * h0_val
+
+    for i in range(n_len):
+        n = n_arr[i]
+        fn = n * forb_val
+        sn = _get_sn_val_jit(fn, use_file, log_f, log_asd, slope, lf0, lasd0)
+
+        if sn > 0:
+            g = g_vals[i]
+            # Optimization: 8 * g * h0^2 / (n^2 * Sn)
+            term = (const_num * g) / (n * n * sn)
+            total += term
+
+    return total
+def dSNR2dt_numpy(m1, m2, a, e, Dl):
+    """
+    Optimized dSNR2dt using Numba Kernels.
+    Modifications: High E mode now uses log-uniform frequency grid.
+    """
+    fmin = 1e-8
+    fmax = 0.1
+    fnumber = 200
+
+    f0 = 1. / 2. / pi * np.sqrt(m1 + m2) * np.power(a, -1.5)
+
+    # 阈值判断标准保持线性逻辑，或者根据需要调整
+    threshold = (fmax - fmin) / fnumber
+
+    # Prepare Noise Data for JIT
+    use_file = False
+    log_f_g = np.array([0.0])
+    log_asd_g = np.array([0.0])
+    slope = 0.0
+    lf0 = 0.0
+    lasd0 = 0.0
+
+    if _LISA_NOISE_DATA is not None and _LISA_NOISE_DATA.get('use_file', False):
+        use_file = True
+        log_f_g = _LISA_NOISE_DATA['log_f']
+        log_asd_g = _LISA_NOISE_DATA['log_asd']
+        slope = _LISA_NOISE_DATA['low_f_slope']
+        lf0 = _LISA_NOISE_DATA['log_f_0']
+        lasd0 = _LISA_NOISE_DATA['log_asd_0']
+
+    # --- High Eccentricity Mode (修改部分) ---
+    if f0 * 10 < threshold:
+        h = np.sqrt(32. / 5.) * m1 * m2 / Dl / a
+
+        # 修改 1: 使用 geomspace 生成对数均匀分布点
+        f_arr = np.geomspace(fmin, fmax, fnumber)
+
+        # 修改 2: 计算对数步长 d(ln f)
+        # d(ln f) = ln(fmax / fmin) / (N - 1)
+        delta_log_f = np.log(fmax / fmin) / (fnumber - 1)
+
+        # 2. Vectorized n calculation
+        n_vals = (f_arr / f0).astype(np.int64)
+
+        # 3. Calculate g using SciPy
+        # 确保外部的 g 函数能处理 n_vals
+        g_vals = g(n_vals, e)
+
+        # 4. Kernel Summation (JIT)
+        # 传入 delta_log_f 而不是 deltaf
+        raw_sum = _dSNR_high_E_kernel(
+            f_arr, n_vals, g_vals, delta_log_f,
+            use_file, log_f_g, log_asd_g, slope, lf0, lasd0
+        )
+
+        return raw_sum * 8 * h * h * f0
+
+    # --- Low Eccentricity Mode (保持不变) ---
+    else:
+        nmin = int(fmin / f0) + 1
+        nmax = int(fmax / f0) + 2
+
+        n_arr = np.arange(nmin, nmax)
+        if len(n_arr) == 0:
+            return 0.0
+
+        # 1. Calculate g (SciPy)
+        g_vals = g(n_arr, e)
+
+        val_h0 = h0(a, m1, m2, Dl)
+        val_forb = forb(m1 + m2, a)
+
+        # 2. Kernel Summation (JIT)
+        total_sum = _dSNR_low_E_kernel(
+            n_arr, g_vals, val_forb, val_h0,
+            use_file, log_f_g, log_asd_g, slope, lf0, lasd0
+        )
+
+        return total_sum
+def SNR_analytical_geo(m1, m2, a, e, tobs, Dl):
+    m1=m1*m_sun
+    m2=m2*m_sun
+    a=a*AU
+    Dl=Dl*1e3*pc
+    tobs=tobs*years
+    # 1. Merger Time Check
+    tmerger = tmerger_lower(m1, m2, a, e)
+    used_tobs = tobs
+
+    if tmerger <= tobs:
+        tmerger = tmerger(m1,m2,a,e)
+        if tmerger <= tobs:
+            #print(f"[Warning] System evolves too fast! analytical lower bound of tmerger ({tmerger:.2e} s) < tobs ({tobs:.2e} s).")
+            #print(f"Approximation inaccurate. Adjusting tobs to : {tmerger}")
+            used_tobs = tmerger
+
+    # 2. Calculate Rate (Using Numpy Vectorization)
+    rate_val = dSNR2dt_numpy(m1, m2, a, e, Dl)
+
+    # 3. Final SNR^2
+    final_snr2 = rate_val * used_tobs
+
+    return np.sqrt(final_snr2)
+def tmerger_lower(m1, m2, a, e):
+    beta = 64 / 5 * m1 * m2 * (m1 + m2)
+    tc = np.power(a, 4) / (4 * beta)
+    t = tc * np.power(1 - e * e, 7 / 2)
+    return t
+
+
+def SNR_analytical_geo0(m1_sol, m2_sol, a_au, e, tobs_yr, Dl_kpc):
     if a_au <= 0 or e >= 1.0: return 0.0
     m1_s = m1_sol * m_sun_sec
     m2_s = m2_sol * m_sun_sec
@@ -313,7 +643,7 @@ class _GNBBHInternalManager:
         u = np.random.uniform(0, 1, n)
         return self.efinal_inv_cdf(u)
 
-    def generate_snapshot_objects(self, Gamma_rep, ync_age=None, ync_count=0):
+    def generate_snapshot_objects(self, Gamma_rep, ync_age=None, ync_count=0,Tobs_yr=10.0,dist_kpc = 8.0):
         """
         Logic remains identical to original source code.
         Data is already filtered at load time.
@@ -323,8 +653,7 @@ class _GNBBHInternalManager:
         if ync_count > 0: self._ensure_ync_loaded()
 
         mwGNsnapshot = []
-        dist_kpc = 8.0
-        Tobs_yr = 10.0
+
 
         # --- Helper to process system ---
         def process_and_add(system, current_age, label):

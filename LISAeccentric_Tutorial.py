@@ -1,20 +1,23 @@
 """
-LISAeccentric Official Tutorial
+LISAeccentric Official Tutorial: Explicit Data Flow & Functional API
 ==============================================================================
-This script demonstrates the full workflow of the 'LISAeccentric' package.
+This script demonstrates the FULL workflow of the 'LISAeccentric' package.
+It covers every functional module, explicit parameter inputs, and return value inspections.
 
-It covers:
-1. Galactic Nucleus (GN): SMBH-perturbed mergers, Steady State & Starbursts.
+Structure:
+0. CompactBinary Core: Object creation, Scalar Analysis, Evolution, Serialization.
+1. Galactic Nucleus (GN): SMBH-perturbed mergers (Steady State & Starbursts).
 2. Globular Clusters (GC): Dynamical mergers (In-cluster vs Ejected).
-3. Galactic Field: Fly-by induced mergers in MW and Elliptical galaxies.
-4. Waveform Analysis: Waveform generation, LISA response, SNR, and Strain (h_c).
+3. Galactic Field: Fly-by induced mergers (MW & Elliptical).
+4. Waveform Analysis: FUNCTIONAL API (Manual inputs for Waveform, SNR, Response).
+5. Noise Management: Customizing the LISA sensitivity curve (N2A5 Model).
 
 Usage:
     Ensure the 'LISAeccentric' folder is in the same directory.
-    Run: python Tutorial_LISAeccentric.py
+    Run: python Tutorial_LISAeccentric_Full.py
 ==============================================================================
 """
-
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.constants as sciconsts
@@ -22,299 +25,405 @@ import scipy.constants as sciconsts
 # Import the package directly
 import LISAeccentric
 
+# [CRITICAL CONFIGURATION]
+# Set verbose=False to disable internal library printing.
+# We will explicitly print inputs and outputs in this script to show the data flow.
+LISAeccentric.set_output_control(verbose=False, show_warnings=False)
+
+
+# ==============================================================================
+# MODULE 0: THE COMPACT BINARY OBJECT (CORE & I/O)
+# ==============================================================================
+print("\n" + "="*80)
+print(">>> MODULE 0: THE COMPACT BINARY OBJECT (CORE & I/O)")
+print("="*80)
+print("Description: The fundamental unit of the package. Handles Physics & I/O.")
+
+# --- 0.1 Initialization ---
+print("\n[0.1] Creating a CompactBinary Object")
+print("   Input Units: Mass [M_sun], Distance [kpc], SMA [AU]")
+
+# Instantiate a specific system
+my_binary = LISAeccentric.CompactBinary(
+    m1=10.0, m2=10.0, a=0.26, e=0.985, Dl=8.0, label="Tutorial_Core_Obj"
+)
+print(f"   Output Object: {my_binary}")
+print(f"   Type Inspection: {type(my_binary)}")
+
+# --- 0.2 Scalar Analysis (Merger Time & SNR) ---
+print("\n[0.2] Scalar Analysis Methods (Direct Attributes)")
+
+# A. Merger Time
+print("   A. compute_merger_time()")
+t_merge_yr = my_binary.compute_merger_time(verbose=False)
+print(f"      Return Value: {t_merge_yr:.4e} [years] (Type: float)")
+
+# B. Analytical SNR
+print("   B. compute_snr_analytical(tobs_yr=4.0)")
+snr_val = my_binary.compute_snr_analytical(tobs_yr=4.0, verbose=False)
+print(f"      Return Value: {snr_val:.4f} (Type: float)")
+
+# --- 0.3 Orbital Evolution ---
+print("\n[0.3] Orbital Evolution (Predicting Future State)")
+print("   Input: delta_t_yr=1000.0, update_self=False")
+
+# Returns tuple (new_a, new_e)
+a_new, e_new = my_binary.evolve_orbit(delta_t_yr=1000.0, update_self=False, verbose=False)
+print(f"      Return Tuple: a={a_new} au, e={e_new}")
+# --- 0.4 Waveform Generation (Object Method) ---
+# [CRITICAL ADDITION: Object-based generation]
+print("\n[0.4] Waveform Generation (Object Method)")
+print("   Method: .compute_waveform(tobs_yr=1.0, points_per_peak=50)")
+print("   Input : tobs_yr (Observation time), ts/points_per_peak (sample rate/ automatic point Resolution) [optional]")
+print("   Note  : Automatically uses object's m1, m2, a, e, Dl.")
+
+# Returns [time, h_plus, h_cross]
+wf_data_obj = my_binary.compute_waveform(
+    tobs_yr=1.0, points_per_peak=50, verbose=False, plot=True
+)
+
+if wf_data_obj is not None:
+    t_vec_obj, hp_obj, hc_obj = wf_data_obj
+    print(f"   Output: List of 3 Arrays")
+    print(f"      t_vec shape : {t_vec_obj.shape}")
+    print(f"      h_plus shape: {hp_obj.shape}")
+else:
+    print("   Output: None (Calculation failed)")
+
+# --- 0.5 Characteristic Strain (Object Method) ---
+# [CORRECTED SECTION]
+print("\n[0.5] Characteristic Strain (Object Method)")
+print("   Method: .compute_characteristic_strain(tobs_yr=4.0)")
+print("   Input : tobs_yr (Integration time)")
+
+# Returns a LIST of 4 arrays: [freq, hc_spectrum, harmonics, snr_contrib]
+strain_res_list = my_binary.compute_characteristic_strain(tobs_yr=4.0, plot=True)
+
+if isinstance(strain_res_list, list) and len(strain_res_list) == 4:
+    print(f"   Output: List of 4 Elements")
+    print(f"      [0] Frequency List       (shape: {strain_res_list[0].shape})")
+    print(f"      [1] Time-integrated Spectrum Amplitude (h_c) (shape: {strain_res_list[1].shape})")
+    print(f"      [2] Instantaneous hc value for each harmonics (shape: {strain_res_list[2].shape})")
+    print(f"      [3] Contribution to Snf  (shape: {strain_res_list[3].shape})")
+else:
+    print(f"   Output: {type(strain_res_list)}")
+
+# --- 0.6 Serialization (I/O) ---
+print("\n[0.6] Data Serialization (I/O)")
+
+# Export
+print("   A. to_list(schema='snapshot_std')")
+data_row = my_binary.to_list(schema='snapshot_std')
+print(f"      Output: {data_row} (Type: List)")
+
+# Import
+print("   B. from_list(data_list=..., schema='snapshot_std')")
+raw_in = ["Imp_Sys", 16.8, 0.5, 0.9, 50.0, 50.0, 0.0]
+new_obj = LISAeccentric.CompactBinary.from_list(data_list=raw_in, schema='snapshot_std')
+print(f"      Output: {new_obj}")
+
 # ==============================================================================
 # MODULE 1: GALACTIC NUCLEUS (GN)
 # ==============================================================================
-print("\n" + "="*70)
+print("\n" + "="*80)
 print(">>> MODULE 1: GALACTIC NUCLEUS (GN)")
-print("="*70)
+print("="*80)
 
-# --- 1.1 Sample Merger Eccentricities (LIGO Band) ---
-# Goal: Analyze the eccentricity distribution when binaries enter the LIGO band (10Hz).
-# Physics: High eccentricities are induced by the Kozai-Lidov mechanism from the SMBH.
+# --- 1.1 Sample Merger Eccentricities ---
 print("\n[1.1] Sampling Eccentricities (LIGO Band @ 10Hz)")
+print("   Input: n_samples=5000, max_bh_mass=50.0")
+
+# Returns: Numpy Array of eccentricities
 gn_e_samples = LISAeccentric.GN.sample_eccentricities(
-    n_samples=5000,      # Total number of systems to sample
-    max_bh_mass=50.0,    # Cutoff: exclude BHs heavier than 50 Msun
-    plot=True            # Action: Plot the Cumulative Distribution Function (CDF)
+    n_samples=5000, max_bh_mass=50.0, plot=True
 )
+print(f"   Output Shape: {np.shape(gn_e_samples)}")
+print(f"   Mean Eccentricity: {np.mean(gn_e_samples):.4f}")
 
 # --- 1.2 Inspect Progenitor Population ---
-# Goal: Access the library of initial conditions for systems that eventually merge.
-# Returns: List of CompactBinary objects representing the progenitors.
 print("\n[1.2] Inspecting Progenitor Initial States")
+print("   Input: n_inspect=3")
+
+# Returns: List of CompactBinary objects
 gn_progenitors = LISAeccentric.GN.get_progenitor(n_inspect=3)
+print(f"   Output List Length: {len(gn_progenitors)}")
+if len(gn_progenitors) > 0:
+    print(f"   Sample Item: {gn_progenitors[0]}")
 
-# --- 1.3 Generate Snapshot (LISA Band / Current Epoch) ---
-# Goal: Simulate the current population of BBHs orbiting Sgr A*.
-# Components:
-#   1. Steady State: Continuous formation over galactic history.
-#   2. Young Nuclear Cluster (YNC): A recent starburst event (e.g., 6 Myr ago).
+# --- 1.3 Generate Snapshot (LISA Band) ---
 print("\n[1.3] Generating Snapshot (LISA Band)")
-gn_snapshot = LISAeccentric.GN.get_snapshot(
-    rate_gn=2.0,         # Steady state formation rate [systems/Myr]
-    age_ync=6.0e6,       # Age of the Young Nuclear Cluster [years]
-    n_ync_sys=100,       # Number of massive BBHs formed in the YNC
-    max_bh_mass=50.0,    # Mass filter
-    plot=True            # Action: Plot a vs (1-e) phase space
-)
+print("   Input: rate_gn=2.0 (sys/Myr), age_ync=6.0e6 (yr)")
 
-# --- 1.4 Extra: Calculate Peak Frequency ---
-# Goal: Calculate the GW peak frequency for a highly eccentric binary.
-# Note: For e -> 1, the peak power is emitted at harmonics much higher than f_orb.
+# Returns: List of CompactBinary objects (Sorted by SNR usually)
+gn_snapshot = LISAeccentric.GN.get_snapshot(
+    rate_gn=2.0, age_ync=6.0e6, n_ync_sys=100, max_bh_mass=50.0, plot=True
+)
+print(f"   Output List Length: {len(gn_snapshot)} systems")
+
+# --- 1.4 Calculate Peak Frequency ---
 print("\n[1.4] Calculating GW Peak Frequency (f_peak)")
+print("   Input: A highly eccentric system (e -> 1)")
+
 if len(gn_snapshot) > 0:
-    # Use the first system from the snapshot
+    # Use actual system from snapshot
     sys = gn_snapshot[0]
-    LISAeccentric.GN.calculate_fpeak_frequency(system=sys)
+    f_peak = LISAeccentric.GN.calculate_fpeak_frequency(system=sys)
+    print(f"   Return Value: f_peak = {f_peak:.4e} Hz (Derived from a={sys.a:.2e}, e={sys.e:.4f})")
 else:
-    # Manual calculation if snapshot is empty
-    LISAeccentric.GN.calculate_fpeak_frequency(m1=30, m2=30, a_au=0.1, e=0.99)
+    # Fallback manual calculation
+    f_peak = LISAeccentric.GN.calculate_fpeak_frequency(m1=30, m2=30, a_au=0.1, e=0.99)
+    print(f"   Return Value: f_peak = {f_peak:.4e} Hz (Manual Params)")
 
 
 # ==============================================================================
 # MODULE 2: GLOBULAR CLUSTERS (GC)
 # ==============================================================================
-print("\n" + "="*70)
+print("\n" + "="*80)
 print(">>> MODULE 2: GLOBULAR CLUSTERS (GC)")
-print("="*70)
+print("="*80)
 
-# --- 2.1 Sample Eccentricities (LIGO Band) ---
-# Goal: Compare eccentricity distributions from different dynamical channels.
-# Channels: 'Incluster' (merges inside cluster) vs 'Ejected' (merges after ejection).
+# --- 2.1 Sample Eccentricities ---
 print("\n[2.1] Sampling Eccentricities (In-cluster vs Ejected)")
+print("   Input: channel_name='Incluster'")
+
 gc_e_samples = LISAeccentric.GC.sample_eccentricities(
-    n=5000,
-    channel_name='Incluster', # Options: 'Incluster', 'Ejected'
-    plot=True
+    n=5000, channel_name='Incluster', plot=True
 )
+print(f"   Output Shape: {np.shape(gc_e_samples)}")
 
-# --- 2.2 Get Snapshots (Monte Carlo Simulations) ---
-# Goal: Visualize BBH populations currently residing in Milky Way Globular Clusters.
-
-# Mode A: Full 10 Realizations (Best statistics)
+# --- 2.2 Get Snapshots (Modes) ---
 print("\n[2.2] Snapshot: Full 10 MW Realizations")
-gc_data_full = LISAeccentric.GC.get_snapshot(
-    mode='10_realizations',
-    plot=True
-)
+gc_data_full = LISAeccentric.GC.get_snapshot(mode='10_realizations', plot=True)
+print(f"   Output List Length: {len(gc_data_full)}")
 
-# Mode B: Single Milky Way Realization (Realistic scatter)
 print("\n[2.3] Snapshot: Single MW Realization")
-gc_data_single = LISAeccentric.GC.get_snapshot(
-    mode='single',
-    plot=True
-)
+gc_data_single = LISAeccentric.GC.get_snapshot(mode='single', plot=True)
+print(f"   Output List Length: {len(gc_data_single)}")
 
-# Mode C: Random Sub-sample (Fixed size for cleaner plotting)
 print("\n[2.4] Snapshot: Random 500 Systems")
-gc_data_random = LISAeccentric.GC.get_snapshot(
-    mode='random',
-    n_random=500,
-    plot=True
-)
+gc_data_random = LISAeccentric.GC.get_snapshot(mode='random', n_random=500, plot=True)
+print(f"   Output List Length: {len(gc_data_random)}")
 
 
 # ==============================================================================
-# MODULE 3: GALACTIC FIELD (FLY-BY INDUCED MERGERS)
+# MODULE 3: GALACTIC FIELD (FLY-BY)
 # ==============================================================================
-print("\n" + "="*70)
+print("\n" + "="*80)
 print(">>> MODULE 3: GALACTIC FIELD (FLY-BY)")
-print("="*70)
+print("="*80)
 
-# --- 3.1 Run Simulation: Milky Way (MW) ---
-# Goal: Run a Monte Carlo simulation of fly-by interactions in the Galactic Field.
-# WARNING: This step performs heavy calculation and overwrites files in './data/'.
+# --- 3.1 Run Simulation (MW) ---
 print("\n[3.1] Running Simulation (Milky Way Model)")
+print("   Input: Detailed Physics & Galaxy Parameters (fbh=7.5e-4, fgw=10.0...)")
+print("   Action: Performs MC simulation and saves results to disk (No return value).")
+
 LISAeccentric.Field.run_simulation(
     galaxy_type='MW',
-    # --- Physical Parameters ---
-    m1=10.0, m2=10.0,     # Mass of BHs [M_sun]
-    mp=0.6,               # Mass of perturber (e.g., field star) [M_sun]
-    fbh=7.5e-4,           # Fraction of stars hosting wide BBHs
-    fgw=10.0,             # GW frequency threshold for merger definition [Hz]
-    formation_mod='starburst', # 'starburst' or 'continuous'
-    # --- Galaxy Structure (MW) ---
-    n0=0.1,               # Stellar density normalization [pc^-3]
-    rsun=8000.0,          # Distance to Galactic Center [pc]
-    Rl=2600.0,            # Scale length [pc]
-    h=1000.0,             # Scale height [pc]
-    sigmav=50000.0,       # Velocity dispersion [m/s]
-    # --- Simulation Control ---
-    n_sim_samples=100000, # Initial MC samples (Reduced for tutorial speed)
-    target_N=50000,       # Target output size
-    rrange_mw=[0.5, 15]   # Radial range [kpc]
+    # Physics
+    m1=10.0, m2=10.0, mp=0.6, fbh=7.5e-4, fgw=10.0,
+    formation_mod='starburst',
+    # Structure
+    n0=0.1, rsun=8000.0, Rl=2600.0, h=1000.0, sigmav=50000.0,
+    # Control
+    n_sim_samples=100000, target_N=50000, rrange_mw=[0.5, 15]
 )
+print("   Status: Simulation completed and saved.")
 
 # --- 3.2 Inspect Progenitors ---
-# Goal: Check the initial SMA distribution and Lifetime of generated progenitors.
 print("\n[3.2] Inspecting Field Progenitors")
-field_progs = LISAeccentric.Field.get_progenitor(
-    galaxy_type='MW',
-    plot=True
-)
+field_progs = LISAeccentric.Field.get_progenitor(galaxy_type='MW', plot=True)
+print(f"   Output List Length: {len(field_progs)}")
 
-# --- 3.3 Sample Eccentricities (LIGO Band) ---
+# --- 3.3 Sample Eccentricities ---
 print("\n[3.3] Sampling Eccentricities (MW Field)")
 field_e_samples = LISAeccentric.Field.sample_eccentricities(
-    n=5000,
-    galaxy_type='MW',
-    plot=True
+    n=5000, galaxy_type='MW', plot=True
 )
+print(f"   Output Shape: {np.shape(field_e_samples)}")
 
-# --- 3.4 Snapshots (MW Field) ---
-# Goal: Generate a realization of the CURRENTLY observable population (LISA band).
+# --- 3.4 Snapshots (MW) ---
 print("\n[3.4] Snapshot: Single MW Realization")
-field_snapshot_mw = LISAeccentric.Field.get_snapshot(
-    mode='single',        # Options: 'single', 'multi', 'forced'
-    t_obs=10.0,           # Observation duration [yr] (affects SNR)
-    t_window_Gyr=10.0,    # Future merger window [Gyr]
-    galaxy_type='MW',
-    plot=True
-)
+print("   Input: t_obs=10.0 yr, t_window_Gyr=10.0")
 
-# --- 3.5 Extension: Elliptical Galaxy (M87) ---
-# Goal: Simulate fly-bys in a Giant Elliptical Galaxy (like M87).
-print("\n[3.5] running Simulation (Giant Elliptical / M87)")
+field_snapshot_mw = LISAeccentric.Field.get_snapshot(
+    mode='single', t_obs=10.0, t_window_Gyr=10.0, galaxy_type='MW', plot=True
+)
+print(f"   Output List Length: {len(field_snapshot_mw)}")
+
+# --- 3.5 Extension: Elliptical Galaxy ---
+print("\n[3.5] Running Simulation (Giant Elliptical / M87)")
 LISAeccentric.Field.run_simulation(
     galaxy_type='Elliptical',
-    # --- Galaxy Structure (M87) ---
-    distance_Mpc=16.8,    # Distance to galaxy [Mpc]
-    M_gal=1.0e12,         # Total stellar mass [M_sun]
-    Re=8000.0,            # Effective Radius [pc]
-    # --- Physics ---
-    m1=30.0, m2=30.0,     # Heavier BHs are common in ellipticals
-    mp=0.6,
-    ell_n_sim=50000,      # Reduced for tutorial speed
-    ell_target_N=20000
+    distance_Mpc=16.8, M_gal=1.0e12, Re=8000.0,
+    m1=30.0, m2=30.0, mp=0.6,
+    ell_n_sim=50000, ell_target_N=20000
 )
+print("   Status: Elliptical simulation saved.")
 
 print("\n[3.6] Snapshot: Elliptical Galaxy")
 ell_snapshot = LISAeccentric.Field.get_snapshot(
-    mode='single',
-    galaxy_type='Elliptical',
-    plot=True
+    mode='single', galaxy_type='Elliptical', plot=True
 )
+print(f"   Output List Length: {len(ell_snapshot)}")
 
 
 # ==============================================================================
-# MODULE 4: WAVEFORM & ANALYSIS PIPELINE
+# MODULE 4: WAVEFORM & ANALYSIS PIPELINE (FUNCTIONAL API)
 # ==============================================================================
-print("\n" + "="*70)
-print(">>> MODULE 4: WAVEFORM & ANALYSIS")
-print("="*70)
+print("\n" + "=" * 80)
+print(">>> MODULE 4: WAVEFORM & ANALYSIS (FUNCTIONAL API / EXTERNAL PARAMS)")
+print("=" * 80)
+print("Description: Demonstrates how to generate waveforms from RAW PARAMETERS")
+print("             rather than using the CompactBinary object methods.")
 
-# Select a target system for detailed analysis (e.g., from the GN snapshot)
+# Select a target system (or define variables manually)
 if len(gn_snapshot) > 0:
     target_sys = gn_snapshot[0]
-    print(f"Selected Target System: {target_sys}")
 else:
-    # Create a manual system if snapshot is empty
-    print("Snapshot empty. Creating manual test system.")
-    target_sys = LISAeccentric.CompactBinary(
-        m1=30.0, m2=30.0, a=0.5, e=0.9, Dl=8.0, label="Manual_Test"
-    )
+    target_sys = my_binary
 
+print(f"Selected Params: M={target_sys.m1}+{target_sys.m2}, a={target_sys.a:.4f}, e={target_sys.e:.4f}")
 
-# --- 4.1 Generate Waveform ---
-# Goal: Compute the h_plus and h_cross polarizations in the Source Frame.
-# Note: Input can be individual parameters OR the CompactBinary object.
-print("\n[4.1] Computing Waveform")
-waveform = LISAeccentric.Waveform.compute_waveform_system(
-    system=target_sys,
-    tobs=1.0,           # Observation time [years]
-    theta=np.pi/4,      # Inclination/Position angles
-    phi=np.pi/4,
-    PN_orbit=3,         # Post-Newtonian order for orbit
-    PN_reaction=2,      # Post-Newtonian order for radiation reaction
-    l0=-sciconsts.pi*np.power(1-target_sys.e,3/2)*15,    # shift the position of the first burst for demonstration purpose
-    plot=True
+# --- 4.1 Generate Waveform (Functional) ---
+print("\n[4.1] Computing Waveform (LISAeccentric.Waveform.compute_waveform)")
+print("   Input : Explicit m1_msun, m2_msun, a_au, e, Dl_kpc, tobs_yr...")
+
+# Execution: Explicitly passing parameters
+waveform_data = LISAeccentric.Waveform.compute_waveform(
+    m1_msun=target_sys.m1,
+    m2_msun=target_sys.m2,
+    a_au=target_sys.a,
+    e=target_sys.e,
+    Dl_kpc=target_sys.Dl,
+    tobs_yr=1.0,
+    points_per_peak=50,
+    initial_orbital_phase=0.0,
+    plot=True,
+    verbose=False
 )
-# Unpack results: [time_array, h_plus, h_cross]
-t_vec, h_plus, h_cross = waveform[0], waveform[1], waveform[2]
 
-fig1=plt.figure(figsize=(8,6))
-plt.plot(t_vec[:1000],h_plus[:1000])
-plt.xlabel('t [s]')
-plt.ylabel('h')
-plt.show()
+# Explicit Unpacking & Check
+if waveform_data is not None:
+    t_vec, h_plus, h_cross = waveform_data[0], waveform_data[1], waveform_data[2]
 
-# --- 4.2 LISA Response ---
-# Goal: Compute the detector response (Strain) considering LISA's arm motion.
+    print(f"   Output Structure: List of 3 Numpy Arrays")
+    print(f"      t_vec shape : {t_vec.shape}")
+    print(f"      h_plus shape: {h_plus.shape}")
+    print(f"      h_cross shape: {h_cross.shape}")
+
+    # CRITICAL: Calculate Sampling Interval (dt) for next steps
+    dt_val_sec = t_vec[1] - t_vec[0]
+    print(f"   Sample time dt    : {dt_val_sec:.4e} seconds (Passed to next step)")
+else:
+    print("   Error: Waveform generation failed.")
+    dt_val_sec = 1.0 # Safe fallback
+
+# --- 4.2 LISA Detector Response (Functional) ---
 print("\n[4.2] Computing LISA Detector Response")
-LISAeccentric.Waveform.compute_LISA_response(
-    timelist=t_vec,
+print(f"   Input: dt={dt_val_sec:.2e}s, hplus/hcross arrays")
+
+# Execution
+lisa_resp = LISAeccentric.Waveform.compute_LISA_response(
+    dt_sample_sec=dt_val_sec,
     hplus=h_plus,
     hcross=h_cross,
-    theta_sky=1.0, phi_sky=2.0, psi_sky=0.5, # Source Sky Position & Polarization
-    mode='interp',      # 'interp' (uniform t) or 'raw' (doppler shifted t)
+    theta_sky=1.0, phi_sky=2.0, psi_sky=0.5,
+    timeshift_sec=100.0,
     plot=True
 )
+print(f"   Output Structure: List of 2 Arrays (Time, Response)")
+print(f"   Max Response Amplitude: {np.max(np.abs(lisa_resp[1])):.4e}")
 
-# --- 4.3 SNR Calculation ---
-# Method A: Analytical (Sky-averaged approximation)
-print("\n[4.3] SNR Calculation")
-snr_ana = LISAeccentric.Waveform.compute_snr_analytical(system=target_sys, tobs=4.0)
+# --- 4.3 SNR Calculation (Analytical vs Numerical) ---
+print("\n[4.3] SNR Calculation (Functional API)")
 
-# Method B: Numerical (Inner product of waveform with itself)
-snr_num = LISAeccentric.Waveform.compute_snr_numerical(
-    timelist=t_vec,
-    hplus=h_plus,
-    phase_difference=0
+# Method A: Analytical (Using Physics Params)
+snr_ana = LISAeccentric.Waveform.compute_snr_analytical(
+    m1_msun=target_sys.m1, m2_msun=target_sys.m2,
+    a_au=target_sys.a, e=target_sys.e,
+    Dl_kpc=target_sys.Dl, tobs_yr=4.0,
 )
-print(f"   >>> Comparison: Analytical SNR={snr_ana:.2f} vs Numerical SNR={snr_num:.2f}")
 
-# Method C: Direct Inner Product (Between two arbitrary waveforms)
-print("   >>> Computing Inner Product <h+|h+>...")
-LISAeccentric.Waveform.compute_inner_product(t_vec, h_plus, h_plus)
+# Method B: Numerical (Using Waveform Arrays + dt)
+snr_num = LISAeccentric.Waveform.compute_snr_numerical(
+    dt_sample_sec=dt_val_sec,
+    strainlist=h_plus
+)
 
-# --- 4.4 Orbital Evolution ---
-# Goal: Calculate time to merger and predict future orbital parameters.
-print("\n[4.4] Orbital Evolution")
+# Method C: Inner Product
+print("   Calculating Inner Product <h+|h+>...")
+inner_prod = LISAeccentric.Waveform.compute_inner_product(
+    dt_sample_sec=dt_val_sec, h1=h_plus, h2=h_plus
+)
+
+print(f"   Output Comparison:")
+print(f"     Analytical SNR (Sky-Avg): {snr_ana:.4f}")
+print(f"     Numerical SNR (Matched) : {snr_num:.4f}")
+print(f"     Inner Product Value     : {inner_prod:.4e}")
+
+
+# --- 4.4 Orbital Evolution (Functional) ---
+print("\n[4.4] Orbital Evolution (Functional API)")
+print("   Method: LISAeccentric.Waveform.compute_merger_time / evolve_orbit")
+
 # 1. Merger Time
-t_merge = LISAeccentric.Waveform.compute_merger_time(system=target_sys)
+t_merge = LISAeccentric.Waveform.compute_merger_time(
+    m1_msun=target_sys.m1, m2_msun=target_sys.m2,
+    a0_au=target_sys.a, e0=target_sys.e
+)
+print(f"   Merger Time: {t_merge:.4e} yr")
 
-# 2. Evolve System (e.g., look at the system halfway to merger)
+# 2. Evolution
 if t_merge != float('inf'):
-    LISAeccentric.Waveform.evolve_orbit(
-        system=target_sys,
-        delta_t_years=t_merge / 2.0
+    dt_evol = t_merge / 2.0
+    print(f"   Evolving forward by {dt_evol:.2e} yr...")
+    a_ev, e_ev = LISAeccentric.Waveform.evolve_orbit(
+        m1_msun=target_sys.m1, m2_msun=target_sys.m2,
+        a0_au=target_sys.a, e0=target_sys.e, delta_t_yr=dt_evol
     )
+    print(f"   Result: a={a_ev:.4e}, e={e_ev:.6f}")
 
-# --- 4.5 Characteristic Strain (h_c) ---
-# Goal: Compute and plot the Characteristic Strain vs Frequency (for sensitivity curves).
+# --- 4.5 Characteristic Strain (Functional) ---
+print("\n[4.5] Characteristic Strain (Functional API)")
 
 # Case A: Single System
-print("\n[4.5] Characteristic Strain (Single System)")
-LISAeccentric.Waveform.compute_characteristic_strain_single(
-    system=target_sys,
-    tobs_years=4.0,
-    plot=True
+print("   A. Single System (Explicit Params)")
+hc_res = LISAeccentric.Waveform.compute_characteristic_strain_single(
+    m1_msun=target_sys.m1, m2_msun=target_sys.m2,
+    a_au=target_sys.a, e=target_sys.e, Dl_kpc=target_sys.Dl,
+    tobs_yr=4.0, plot=True
 )
+strain_res_list=hc_res
+if isinstance(strain_res_list, list) and len(strain_res_list) == 4:
+    print(f"   Output: List of 4 Elements")
+    print(f"      [0] Frequency List       (shape: {strain_res_list[0].shape})")
+    print(f"      [1] Time-integrated Spectrum Amplitude (h_c) (shape: {strain_res_list[1].shape})")
+    print(f"      [2] Instantaneous hc value for each harmonics (shape: {strain_res_list[2].shape})")
+    print(f"      [3] Contribution to Snf  (shape: {strain_res_list[3].shape})")
+else:
+    print(f"   Output: {type(strain_res_list)}")
 
 # Case B: Population Batch
-# Goal: Compute h_c for an entire list of binaries (e.g., from a GN snapshot).
-print("\n[4.6] Characteristic Strain (Population Batch)")
+print("   B. Population Batch Analysis")
+# Note: This function expects a list of objects, but is part of the functional module
 if len(gn_snapshot) > 0:
-    # Use top 100 systems for demonstration speed
-    batch_list = gn_snapshot
-    LISAeccentric.Waveform.run_population_strain_analysis(
-        binary_list=batch_list,
-        tobs_years=4.0,
-        plot=True
+    batch_res = LISAeccentric.Waveform.run_population_strain_analysis(
+        binary_list=gn_snapshot, tobs_yr=4.0, plot=True
     )
+    print(f"      Output: Batch Results List,"
+          f" [faxis, Snf_tot, all_fn_lists, all_hcavg_lists, all_hnc_lists]")
+
 
 # ==============================================================================
 # MODULE 5: NOISE MANAGEMENT (NOISE HANDLER)
 # ==============================================================================
-print("\n" + "=" * 70)
-print(">>> MODULE 5: NOISE MANAGEMENT (NOISE HANDLER)")
-print("=" * 70)
+print("\n" + "=" * 80)
+print(">>> MODULE 5: NOISE MANAGEMENT")
+print("=" * 80)
 
 # --- 5.1 Generate Synthetic Noise Data (N2A5 Model) ---
-# Goal: Create a custom noise curve on the fly to test the update functionality.
-print("\n[5.1] Generating Synthetic N2A5 Noise Data...")
-
+print("\n[5.1] Generating Synthetic N2A5 Noise Data")
+print("   Action: Defining complex N2A5 foreground model locally.")
 
 def generate_n2a5_data(f_min=1e-5, f_max=1.0, n_points=3000):
     """Generates LISA Noise ASD based on the N2A5 foreground model."""
@@ -348,42 +457,48 @@ def generate_n2a5_data(f_min=1e-5, f_max=1.0, n_points=3000):
     Sn_list = S_n_lisa_calc(flist)
     return flist, np.sqrt(Sn_list)
 
-
-# Generate data
+# Execution
 f_new, asd_new = generate_n2a5_data()
+print(f"   Generated Data: {len(f_new)} points.")
+print(f"   Freq Range: [{f_new[0]:.1e}, {f_new[-1]:.1e}] Hz")
 
-# Plot new noise curve
+# Plotting the generated noise
 plt.figure(figsize=(8, 5))
 plt.loglog(f_new, asd_new, label='Generated N2A5 Model', color='darkred')
-plt.title("Synthetic N2A5 Noise Curve (Ready to Update)")
+plt.title("Synthetic N2A5 Noise Curve")
 plt.xlabel("Frequency [Hz]")
 plt.ylabel("ASD [1/sqrt(Hz)]")
-plt.grid(True, which='both', linestyle='--', alpha=0.5)
-plt.legend()
+plt.grid(True, which='both', linestyle='--')
 plt.show()
 
 # --- 5.2 Update Noise Curve ---
-# Goal: Update 'LISA_noise_ASD.csv' with the new data.
-# The core function will print the "Restart Kernel" warning automatically.
-print("\n[5.2] Updating System Noise Curve...")
-#LISAeccentric.Noise.update_noise_curve([f_new, asd_new])
+print("\n[5.2] Updating System Noise Curve")
+print("   Input: [Frequency_Array, ASD_Array]")
+
+# Execution
+LISAeccentric.Noise.update_noise_curve([f_new, asd_new])
+print("   Status: Global _LISA_NOISE_DATA updated. File overwritten with backup.")
 
 # --- 5.3 Recover Noise Curve ---
-# Goal: Demonstrate how to revert to previous versions or presets.
+print("\n[5.3] Testing Recovery Options")
 
-# A. Revert to the specific backup version (e.g., 1)
-print("\n[5.3] Testing Recovery: Revert to backup #1...")
+# A. Revert to Backup
+print("   A. Revert to backup #1...")
 LISAeccentric.Noise.recover_noise_curve(version=1)
 
-# B. Load 'Official' Preset
-print("\n[5.4] Testing Recovery: Load 'Official' preset...")
+# B. Load Official Preset
+print("   B. Load 'Official' preset...")
 LISAeccentric.Noise.recover_noise_curve(version='official')
 
-noiselist=LISAeccentric.Noise.get_noise_curve(plot=True)
-print(noiselist[0][:3],noiselist[1][:3])
+# --- 5.4 Verify Current Curve ---
+print("\n[5.4] Retrieving Current Noise Curve")
+curve_data = LISAeccentric.Noise.get_noise_curve(plot=True)
+if curve_data is not None:
+    print(f"   Output Structure: List [Freq_Array, Strain_Array]")
+    print(f"   Current Min Freq: {curve_data[0][0]:.2e} Hz")
 
+# Cleanup
 LISAeccentric.Noise.clean_backups()
-
-print("\n" + "=" * 70)
+print("\n" + "=" * 80)
 print("TUTORIAL COMPLETED SUCCESSFULLY")
-print("=" * 70)
+print("=" * 80)
