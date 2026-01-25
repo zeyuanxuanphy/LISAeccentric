@@ -70,6 +70,11 @@ print("   B. compute_snr_analytical(tobs_yr=4.0)")
 snr_val = my_binary.compute_snr_analytical(tobs_yr=4.0, verbose=False)
 print(f"      Return Value: {snr_val:.4f} (Type: float)")
 
+# C. Peak Frequency
+print("   C. compute_fpeak()")
+f_peak = my_binary.compute_fpeak(verbose=False)
+print(f"      Return Value: {f_peak:.4e} [Hz] (Type: float)")
+
 # --- 0.3 Orbital Evolution ---
 print("\n[0.3] Orbital Evolution (Predicting Future State)")
 print("   Input: delta_t_yr=1000.0, update_self=False")
