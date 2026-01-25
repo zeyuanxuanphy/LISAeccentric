@@ -11,19 +11,17 @@
     * *Based on:* Hoang et al. (2018) [ApJ 856 140]; Xuan et al. (2024a) [ApJ 965 148]; Stephan et al. (2019) [ApJ 878 58]
 
 * ✨ **Globular Clusters (GC)**: Dynamically formed BBHs, including in-cluster and ejected mergers
-    * *Based on:*
-        * **Eccentricity Distributions:** Zevin et al. (2020) [ApJ 903 67]
-        * **MW GC Populations:** Kremer et al. (2020) [ApJS 247 48]; Xuan et al. (2025b) [ApJL 985 L42]
+    * *Based on:* Kremer et al. (2020) [ApJS 247 48]; Zevin et al. (2020) [ApJ 903 67]; Xuan et al. (2025b) [ApJL 985 L42]
 
 * 🌠 **Galactic Field**: Fly-by–induced mergers in Milky Way–like and elliptical galaxies
     * *Based on:* Michaely & Perets (2019) [ApJL 887 L36]; Raveh et al. (2022) [MNRAS 514.4246R]; Michaely & Naoz (2022) [ApJ 936 184]; Xuan et al. (2024a) [ApJ 965 148]
 
 ### 🛠 Waveform & Signal Analysis
 
-* Generate PN-based, time-domain waveforms for eccentric binaries.
-* Evolve orbital parameters throughout the inspiral stage.
-* Compute LISA detector response (Michelson response).
-* Evaluate characteristic strain ($h_c$) and stochastic backgrounds.
+* Generate PN-based, time-domain waveforms for eccentric binaries (3PN, non-spinning). [PhysRevD.82.024033]
+* Evolve orbital parameters throughout the inspiral stage. [PhysRev.136.B1224]
+* Compute the LISA detector response for a single Michelson signal extracted from vertex 1. [PhysRevD.67.022001]
+* Evaluate characteristic strain ($h_c$) and stochastic backgrounds. [PhysRevD.110.023020]
 * Calculate signal-to-noise ratio (SNR) and noise-weighted inner products for time-domain waveforms.
 
 ---
