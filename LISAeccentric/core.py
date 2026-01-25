@@ -120,10 +120,25 @@ class CompactBinary:
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def __repr__(self):
-        """String representation."""
-        info = f"<CompactBinary [{self.label}]: M={self.m1:.1f}+{self.m2:.1f} m_sun, a={self.a:.2f}AU, e={self.e:.4f}, Dl={self.Dl:.1f}kpc"
-        if 'snr' in self.extra:
-            info += f", SNR={self.extra['snr']:.2f}"
+        """String representation (Updated to print all extra params)."""
+        # 1. 基础物理量
+        info = f"<CompactBinary [{self.label}]: M={self.m1:.1f}+{self.m2:.1f} m_sun, a={self.a:.3e}AU, e={self.e:.4f}, Dl={self.Dl:.1f}kpc"
+
+        # 2. 动态遍历并添加 extra 中的所有信息
+        if self.extra:
+            extra_str_list = []
+            for k, v in self.extra.items():
+                # 针对浮点数做自适应格式化，避免输出过长
+                if isinstance(v, float):
+                    # 如果数值很大或很小，用科学计数法；否则保留3位小数
+                    val_str = f"{v:.2e}" if (abs(v) < 1e-2 or abs(v) > 1e4) and v != 0 else f"{v:.3f}"
+                else:
+                    val_str = str(v)
+                extra_str_list.append(f"{k}={val_str}")
+
+            # 将 extra 信息拼接在后面
+            info += " | " + ", ".join(extra_str_list)
+
         return info + ">"
 
     def info(self):
@@ -415,71 +430,122 @@ class LISAeccentric:
     # MODULE 1: Galactic Nucleus (GN)
     # ==========================================================================
     class _GN_Handler:
-        @mute_if_global_verbose_false
-        def sample_eccentricities(self, n_samples=5000, max_bh_mass=50, plot=True):
-            """Feature 1: Randomly sample N merger eccentricities (LIGO Band 10Hz)."""
-            print(f"\n[GN] Sampling {n_samples} merger eccentricities (max_mass={max_bh_mass})...")
-            e_samples = GN_BBH.generate_random_merger_eccentricities(n=n_samples, max_bh_mass=max_bh_mass)
-            print(f'Sample Mean e (at 10Hz): {np.mean(e_samples):.4e}')
-            if plot:
-                GN_BBH.plot_ecc_cdf_log(e_list=e_samples)
-            return e_samples
+            @mute_if_global_verbose_false
+            def sample_eccentricities(self, n_samples=5000, max_bh_mass=50, plot=True):
+                """Feature 1: Randomly sample N merger eccentricities (LIGO Band 10Hz)."""
+                print(f"\n[GN] Sampling {n_samples} merger eccentricities (max_mass={max_bh_mass})...")
+                e_samples = GN_BBH.generate_random_merger_eccentricities(n=n_samples, max_bh_mass=max_bh_mass)
+                print(f'Sample Mean e (at 10Hz): {np.mean(e_samples):.4e}')
+                if plot:
+                    GN_BBH.plot_ecc_cdf_log(e_list=e_samples)
+                return e_samples
 
-        @mute_if_global_verbose_false
-        def get_progenitor(self, n_inspect=3) -> List[CompactBinary]:
-            """Feature 2: Get Progenitor Population (Initial States)."""
-            print(f"\n[GN] Getting {n_inspect} Progenitor Systems...")
-            raw_data = GN_BBH.get_random_merger_systems(n=n_inspect)
-            objs = []
-            for row in raw_data:
-                obj = CompactBinary.from_list(row, schema='gn_prog')
-                objs.append(obj)
-                print(obj)
-            return objs
+            @mute_if_global_verbose_false
+            def get_progenitor(self, n_inspect=3) -> List[CompactBinary]:
+                """Feature 2: Get Progenitor Population (Initial States)."""
+                print(f"\n[GN] Getting {n_inspect} Progenitor Systems...")
 
-        @mute_if_global_verbose_false
-        def get_snapshot(self, rate_gn=2.0, age_ync=6.0e6, n_ync_sys=100, max_bh_mass=50, plot=True) -> List[
-            CompactBinary]:
-            """Feature 3: Snapshot Generation (LISA Band / Current State)."""
-            print(f"\n[GN] Generating Snapshot: Rate={rate_gn}/Myr, YNC Age={age_ync / 1e6} Myr")
-            raw_data = GN_BBH.generate_snapshot_population(
-                Gamma_rep=rate_gn, ync_age=age_ync, ync_count=n_ync_sys, max_bh_mass=max_bh_mass
-            )
-            raw_data.sort(key=lambda x: x[6], reverse=True)
-            objs = [CompactBinary.from_list(row, schema='snapshot_std') for row in raw_data]
-            print(f"Altogether {len(objs)} systems survived.")
-            if plot:
-                GN_BBH.plot_snapshot_population(raw_data, title="Simulated MW Galactic Nucleus BBH Population")
-            return objs
+                # 数据来源：GN_BBH.get_random_merger_systems
+                # 格式: [m1, m2, a1, e1, e2, i_init, a2, afin, efin, t_final]
+                raw_data = GN_BBH.get_random_merger_systems(n=n_inspect)
 
-        @mute_if_global_verbose_false
-        def calculate_fpeak_frequency(self, m1=None, m2=None, a_au=None, e=None, system=None):
-            """
-            Extra Feature: Calculate GW Peak Frequency.
-            Supports parameter input OR CompactBinary object input.
-            """
-            # 自动切换逻辑
-            if system is not None:
-                m1, m2, a_au, e = system.m1, system.m2, system.a, system.e
-            elif isinstance(m1, CompactBinary):
-                # 如果用户把对象传给了第一个参数
-                system = m1
-                m1, m2, a_au, e = system.m1, system.m2, system.a, system.e
+                objs = []
+                for row in raw_data:
+                    # 1. 实例化基础对象 (必填项)
+                    # GN 核系统的距离默认设为 8.0 kpc
+                    obj = CompactBinary(
+                        m1=float(row[0]),
+                        m2=float(row[1]),
+                        a=float(row[2]),
+                        e=float(row[3]),
+                        Dl=8.0,
+                        label="GN_Progenitor"
+                    )
 
-            if a_au <= 0: return 0.0
+                    # 2. 将额外信息存入 extra 字典 (而不是 append)
+                    obj.extra = {
+                        'e2_init': float(row[4]),  # 新增: initial e2
+                        'i_init_rad': float(row[5])/180*pi,  # 新增: initial inclination
+                        'a2_init': float(row[6]),  # 新增: initial a2
+                        'a_final': float(row[7]),  # 新增: final a1
+                        'e_final': float(row[8]),  # 新增: final e1
+                        'lifetime_yr': float(row[9])
+                    }
 
-            G_si = 6.674e-11
-            M_total_si = (m1 + m2) * 1.989e30
-            a_m = a_au * 1.496e11
-            f_orb = (1.0 / (2 * np.pi)) * np.sqrt(G_si * M_total_si / (a_m ** 3))
+                    objs.append(obj)
+                    print(obj)  # 会打印出 extra 中的信息
+                return objs
 
-            if e < 0.0: e = 0.0
-            if e >= 1.0: e = 0.999999
-            factor = np.power(1 + e, 1.1954) / np.power(1 - e, 1.5)
-            f_peak = f_orb * factor
+            @mute_if_global_verbose_false
+            def get_snapshot(self, rate_gn=2.0, age_ync=6.0e6, n_ync_sys=100, max_bh_mass=50, plot=True) -> List[
+                CompactBinary]:
+                """Feature 3: Snapshot Generation (LISA Band / Current State)."""
+                print(f"\n[GN] Generating Snapshot: Rate={rate_gn}/Myr, YNC Age={age_ync / 1e6} Myr")
 
-            print(f"[GN Util] f_peak = {f_peak:.4e} Hz (a={a_au:.2f} AU, e={e:.4f})")
-            return f_peak
+                # 数据来源: GN_BBH.generate_snapshot_population
+                # 格式: [label, dist, a, e, i, m1, m2, snr]
+                raw_data = GN_BBH.generate_snapshot_population(
+                    Gamma_rep=rate_gn, ync_age=age_ync, ync_count=n_ync_sys, max_bh_mass=max_bh_mass
+                )
+
+                # 按 SNR 排序 (索引 7)
+                raw_data.sort(key=lambda x: x[7], reverse=True)
+
+                objs = []
+                for row in raw_data:
+                    # 1. 实例化基础对象
+                    obj = CompactBinary(
+                        label=str(row[0]),
+                        Dl=float(row[1]),
+                        a=float(row[2]),
+                        e=float(row[3]),
+                        m1=float(row[5]),
+                        m2=float(row[6])
+                    )
+
+                    # 2. 将额外信息存入 extra 字典
+                    obj.extra = {
+                        'inclination_rad': float(row[4])/180*pi,  # 新增: 当前时刻的倾角 i
+                        'snr': float(row[7])
+                    }
+
+                    objs.append(obj)
+
+                print(f"Altogether {len(objs)} systems survived.")
+                if plot:
+                    # 注意 plot 函数可能需要根据 raw_data 的新列结构进行微调，
+                    # 但这里只负责传递数据
+                    GN_BBH.plot_snapshot_population(raw_data, title="Simulated MW Galactic Nucleus BBH Population")
+                return objs
+
+            @mute_if_global_verbose_false
+            def calculate_fpeak_frequency(self, m1=None, m2=None, a_au=None, e=None, system=None):
+                """
+                Extra Feature: Calculate GW Peak Frequency.
+                Supports parameter input OR CompactBinary object input.
+                """
+                # 自动切换逻辑
+                if system is not None:
+                    m1, m2, a_au, e = system.m1, system.m2, system.a, system.e
+                elif isinstance(m1, CompactBinary):
+                    # 如果用户把对象传给了第一个参数
+                    system = m1
+                    m1, m2, a_au, e = system.m1, system.m2, system.a, system.e
+
+                if a_au <= 0: return 0.0
+
+                G_si = 6.674e-11
+                M_total_si = (m1 + m2) * 1.989e30
+                a_m = a_au * 1.496e11
+                f_orb = (1.0 / (2 * np.pi)) * np.sqrt(G_si * M_total_si / (a_m ** 3))
+
+                if e < 0.0: e = 0.0
+                if e >= 1.0: e = 0.999999
+                factor = np.power(1 + e, 1.1954) / np.power(1 - e, 1.5)
+                f_peak = f_orb * factor
+
+                print(f"[GN Util] f_peak = {f_peak:.4e} Hz (a={a_au:.2f} AU, e={e:.4f})")
+                return f_peak
 
     # ==========================================================================
     # MODULE 2: Globular Clusters (GC)

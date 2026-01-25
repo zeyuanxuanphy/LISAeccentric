@@ -45,10 +45,17 @@ print("   Input Units: Mass [M_sun], Distance [kpc], SMA [AU]")
 
 # Instantiate a specific system
 my_binary = LISAeccentric.CompactBinary(
-    m1=10.0, m2=10.0, a=0.26, e=0.985, Dl=8.0, label="Tutorial_Core_Obj"
+    m1=10.0, m2=10.0, a=0.26, e=0.985, Dl=8.0,
+    label="Tutorial_Core_Obj",
+    extra={
+        'inclination': 0.7854,  # e.g., mutal inclination [rad] (~45 degrees)
+    }
 )
 print(f"   Output Object: {my_binary}")
 print(f"   Type Inspection: {type(my_binary)}")
+
+# You can also access extra data directly
+print(f"   Inclination: {my_binary.extra['inclination']:.4f} rad")
 
 # --- 0.2 Scalar Analysis (Merger Time & SNR) ---
 print("\n[0.2] Scalar Analysis Methods (Direct Attributes)")

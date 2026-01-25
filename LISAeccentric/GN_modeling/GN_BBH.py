@@ -13,6 +13,7 @@ from scipy.interpolate import PchipInterpolator  # [新增] 用于快速插值
 from scipy.integrate import quad
 from numba import njit
 import scipy
+
 # ==========================================
 # 1. Physical Constants Definition
 # ==========================================
@@ -31,8 +32,9 @@ days = 24 * 3600
 pc = 3.261 * sciconsts.light_year / CONST_c
 AU = CONST_au / CONST_c
 gama = 0.577215664901532860606512090082402431042159335
-pi=sciconsts.pi
+pi = sciconsts.pi
 C_val = sciconsts.c
+
 
 # ==========================================
 # 2. Evolutionary Physics Functions
@@ -49,7 +51,7 @@ class MergerTimeAccelerator:
         # 尝试加载缓存
         if self._load_cache():
             pass
-            #print(f"[System] Loaded merger time table from {self.cache_file}")
+            # print(f"[System] Loaded merger time table from {self.cache_file}")
         else:
             print("[System] Computing merger time table (first time run)...")
             self._compute_and_save_table()
@@ -107,8 +109,12 @@ class MergerTimeAccelerator:
         if e > 0.99999:
             return (768.0 / 425.0) * np.power(1 - e ** 2, 3.5)
         return self.interpolator(e)
+
+
 # 初始化全局加速器实例
 _ACCELERATOR = MergerTimeAccelerator()
+
+
 # tmerger 函数保持不变，直接调用 _ACCELERATOR.get_factor
 def tmerger_integral(m1, m2, a0, e0):
     beta = 64.0 / 5.0 * m1 * m2 * (m1 + m2)
@@ -122,8 +128,12 @@ def tmerger_integral(m1, m2, a0, e0):
         factor = np.array([_ACCELERATOR.get_factor(e) for e in e0])
 
     return t_circ * factor
+
+
 def GWtime(m1, m2, a1, e1):
     return tmerger_integral(m1, m2, a1, e1)
+
+
 def GWtime_old(m1, m2, a1, e1):
     if e1 >= 1.0 or a1 <= 0: return 0.0
     factor = 1.6e13
@@ -256,7 +266,7 @@ def _S_n_lisa_original(f):
     m1 = 5.0e9
     m2 = sciconsts.c * 0.41 / m1 / 2.0
     term_inst = 20.0 / 3.0 * (1 + (f / m2) ** 2) * (
-                4.0 * (9.0e-30 / (2 * pi * f) ** 4 * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23) / m1 ** 2
+            4.0 * (9.0e-30 / (2 * pi * f) ** 4 * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23) / m1 ** 2
     return term_inst + S_gal_N2A5(f)
 
 
@@ -298,11 +308,16 @@ def S_n_lisa(f):
     else:
         return _S_n_lisa_original(f)
 
+
 def forb(M, a):
     return 1.0 / 2.0 / pi * np.sqrt(M) * np.power(a, -1.5)
+
+
 def J(n, x):
     # scipy.special.jv 原生支持数组输入
     return scipy.special.jv(n, x)
+
+
 def g(n, e):
     # n 可以是数组，e 是标量
     # 这里所有的计算都会自动广播 (Broadcasting)
@@ -319,8 +334,12 @@ def g(n, e):
             4.0 / (3.0 * n * n) * np.power(term3, 2.0)
     )
     return result
+
+
 def h0(a, m1, m2, Dl):
     return np.sqrt(32 / 5) * m1 * m2 / Dl / a
+
+
 @njit(fastmath=True, cache=True)
 def _get_sn_val_jit(f, use_file, log_f_grid, log_asd_grid, low_f_slope, log_f_0, log_asd_0):
     """
@@ -363,6 +382,8 @@ def _get_sn_val_jit(f, use_file, log_f_grid, log_asd_grid, low_f_slope, log_f_0,
 
         asd = 10.0 ** log_asd
         return asd * asd
+
+
 @njit(fastmath=True, cache=True)
 def _dSNR_high_E_kernel(f_arr, n_vals, g_vals, delta_log_f, use_file, log_f, log_asd, slope, lf0, lasd0):
     """
@@ -389,6 +410,8 @@ def _dSNR_high_E_kernel(f_arr, n_vals, g_vals, delta_log_f, use_file, log_f, log
                 total += term
 
     return total * delta_log_f
+
+
 @njit(fastmath=True, cache=True)
 def _dSNR_low_E_kernel(n_arr, g_vals, forb_val, h0_val, use_file, log_f, log_asd, slope, lf0, lasd0):
     # 低偏心率部分保持不变
@@ -410,6 +433,8 @@ def _dSNR_low_E_kernel(n_arr, g_vals, forb_val, h0_val, use_file, log_f, log_asd
             total += term
 
     return total
+
+
 def dSNR2dt_numpy(m1, m2, a, e, Dl):
     """
     Optimized dSNR2dt using Numba Kernels.
@@ -489,21 +514,23 @@ def dSNR2dt_numpy(m1, m2, a, e, Dl):
         )
 
         return total_sum
+
+
 def SNR_analytical_geo(m1, m2, a, e, tobs, Dl):
-    m1=m1*m_sun
-    m2=m2*m_sun
-    a=a*AU
-    Dl=Dl*1e3*pc
-    tobs=tobs*years
+    m1 = m1 * m_sun
+    m2 = m2 * m_sun
+    a = a * AU
+    Dl = Dl * 1e3 * pc
+    tobs = tobs * years
     # 1. Merger Time Check
     tmerger = tmerger_lower(m1, m2, a, e)
     used_tobs = tobs
 
     if tmerger <= tobs:
-        tmerger = tmerger(m1,m2,a,e)
+        tmerger = tmerger(m1, m2, a, e)
         if tmerger <= tobs:
-            #print(f"[Warning] System evolves too fast! analytical lower bound of tmerger ({tmerger:.2e} s) < tobs ({tobs:.2e} s).")
-            #print(f"Approximation inaccurate. Adjusting tobs to : {tmerger}")
+            # print(f"[Warning] System evolves too fast! analytical lower bound of tmerger ({tmerger:.2e} s) < tobs ({tobs:.2e} s).")
+            # print(f"Approximation inaccurate. Adjusting tobs to : {tmerger}")
             used_tobs = tmerger
 
     # 2. Calculate Rate (Using Numpy Vectorization)
@@ -513,6 +540,8 @@ def SNR_analytical_geo(m1, m2, a, e, tobs, Dl):
     final_snr2 = rate_val * used_tobs
 
     return np.sqrt(final_snr2)
+
+
 def tmerger_lower(m1, m2, a, e):
     beta = 64 / 5 * m1 * m2 * (m1 + m2)
     tc = np.power(a, 4) / (4 * beta)
@@ -617,8 +646,10 @@ class _GNBBHInternalManager:
         e_vals = []
         indices = []
         for i, sys_data in enumerate(self.raw_data_gn):
-            a_fin = sys_data[9]
-            e_fin = sys_data[10]
+            # [MODIFIED] 由于 e2 在索引 5 处被插入，原本的索引 9, 10 变为 10, 11
+            # 0:id, 1:m1, 2:m2, 3:a1, 4:e1, 5:e2(NEW), 6:a2, 7:i, 8:tf, 9:tfin, 10:afin, 11:efin
+            a_fin = sys_data[10]
+            e_fin = sys_data[11]
             if a_fin < 1e-2:
                 e_vals.append(e_fin)
                 indices.append(i)
@@ -643,7 +674,7 @@ class _GNBBHInternalManager:
         u = np.random.uniform(0, 1, n)
         return self.efinal_inv_cdf(u)
 
-    def generate_snapshot_objects(self, Gamma_rep, ync_age=None, ync_count=0,Tobs_yr=10.0,dist_kpc = 8.0):
+    def generate_snapshot_objects(self, Gamma_rep, ync_age=None, ync_count=0, Tobs_yr=10.0, dist_kpc=8.0):
         """
         Logic remains identical to original source code.
         Data is already filtered at load time.
@@ -654,19 +685,20 @@ class _GNBBHInternalManager:
 
         mwGNsnapshot = []
 
-
         # --- Helper to process system ---
         def process_and_add(system, current_age, label):
             res = self._get_system_state_at_time(system, current_age)
             if res is not None:
-                # res is (a, e, m1, m2)
-                a, e, m1, m2 = res
+                # [MODIFIED] res now includes inclination: (a, e, i, m1, m2)
+                a, e, incl, m1, m2 = res
                 snr = SNR_analytical_geo(m1, m2, a, e, Tobs_yr, dist_kpc)
-                mwGNsnapshot.append([label, dist_kpc, a, e, m1, m2, snr])
+                # [MODIFIED] Added 'incl' to the output list
+                mwGNsnapshot.append([label, dist_kpc, a, e, incl, m1, m2, snr])
 
         # --- 1. GN Steady State ---
         if self.raw_data_gn is not None and len(self.raw_data_gn) > 0 and Gamma_rep > 0:
-            lifetimes = np.array([row[8] for row in self.raw_data_gn])
+            # [MODIFIED] lifetime index shifted from 8 to 9 (t_final)
+            lifetimes = np.array([row[9] for row in self.raw_data_gn])
             t_final_max = np.max(lifetimes)
             window_myr = t_final_max / 1e6
             total_systems_to_gen = int(window_myr * Gamma_rep)
@@ -688,30 +720,48 @@ class _GNBBHInternalManager:
         return mwGNsnapshot
 
     def _get_system_state_at_time(self, system, current_age):
-        m1, m2, tf_actual = system[1], system[2], system[8]
-        snapshots = system[11]
+        # [MODIFIED] Index shifting due to insertion of e2
+        # m1(1), m2(2) unchanged.
+        # tf_actual was 8, now 9.
+        # snapshots was 11, now 12.
+        # init_i is at index 7.
+        m1, m2, tf_actual = system[1], system[2], system[9]
+        init_i = system[7]
+        snapshots = system[12]
 
         if current_age > tf_actual: return None
 
-        a_curr, e_curr = -1, -1
+        a_curr, e_curr, i_curr = -1, -1, -1
         if len(snapshots) > 0:
             snaps_arr = np.array(snapshots)
             times = snaps_arr[:, 0]
             if current_age <= times[-1]:
                 idx = (np.abs(times - current_age)).argmin()
                 a_curr, e_curr = snaps_arr[idx, 1], snaps_arr[idx, 2]
+                # [MODIFIED] Reading inclination from snapshot (assuming stored at index 3 or 5, both valid per write script)
+                if snaps_arr.shape[1] > 3:
+                    i_curr = snaps_arr[idx, 3]  # Using index 3 (original inclination slot)
+                else:
+                    i_curr = init_i
             else:
                 t_last, a_last, e_last = times[-1], snaps_arr[-1, 1], snaps_arr[-1, 2]
+                if snaps_arr.shape[1] > 3:
+                    i_last = snaps_arr[-1, 3]
+                else:
+                    i_last = init_i
+
                 dt = current_age - t_last
                 if dt > 0:
-
                     a_curr, e_curr = solve_ae_after_time(m1, m2, a_last, e_last, dt)
+                    i_curr = i_last  # Assume constant inclination during GW decay
                 else:
                     a_curr, e_curr = a_last, e_last
+                    i_curr = i_last
         else:
             a_curr, e_curr = system[3], system[4]
+            i_curr = init_i
 
-        if a_curr > 0: return (a_curr, e_curr, m1, m2)
+        if a_curr > 0: return (a_curr, e_curr, i_curr, m1, m2)
         return None
 
 
@@ -768,14 +818,15 @@ def get_random_merger_systems(n=10, max_bh_mass=100.0):
     """
     Returns N random merger systems as a list of parameters.
     Filter: m1, m2 <= max_bh_mass (default 100).
-    Format: [m1, m2, ai, ei, i_i, a2, afinal, efinal, t_final]
+    Format: [m1, m2, ai, ei, e2, i_i, a2, afinal, efinal, t_final]
     """
     _manager.check_and_update_threshold(max_bh_mass)
     raw_sys = _manager.get_random_mergers(n)
     result = []
     for s in raw_sys:
-        # s indices: 1:m1, 2:m2, 3:ai, 4:ei, 6:ii, 5:a2, 9:afin, 10:efin, 8:t_final
-        sys_list = [s[1], s[2], s[3], s[4], s[6], s[5], s[9], s[10], s[8]]
+        # [MODIFIED] Added s[5] (e2) to the return list.
+        # Adjusted indices: afin(10), efin(11), tfin(9)
+        sys_list = [s[1], s[2], s[3], s[4], s[5], s[7], s[6], s[10], s[11], s[9]]
         result.append(sys_list)
     return result
 
@@ -784,7 +835,7 @@ def generate_snapshot_population(Gamma_rep=3.0, ync_age=None, ync_count=0, max_b
     """
     Generates the snapshot object list.
     Filter: m1, m2 <= max_bh_mass (default 100) applied at load time.
-    Returns: list of [label, dist, a, e, m1, m2, snr]
+    Returns: list of [label, dist, a, e, i, m1, m2, snr]
     """
     _manager.check_and_update_threshold(max_bh_mass)
     return _manager.generate_snapshot_objects(Gamma_rep, ync_age, ync_count)
@@ -793,7 +844,7 @@ def generate_snapshot_population(Gamma_rep=3.0, ync_age=None, ync_count=0, max_b
 def plot_snapshot_population(mwGNsnapshot, title="MW Galactic Nucleus BBH Snapshot"):
     """
     Plots the snapshot population list.
-    mwGNsnapshot: list of [label, dist, a, e, m1, m2, snr]
+    mwGNsnapshot: list of [label, dist, a, e, i, m1, m2, snr]
     """
     if not mwGNsnapshot:
         print("Empty snapshot.")
@@ -801,10 +852,11 @@ def plot_snapshot_population(mwGNsnapshot, title="MW Galactic Nucleus BBH Snapsh
 
     # Extract data columns
     data = np.array(mwGNsnapshot, dtype=object)
-    # col indices: 2:a, 3:e, 6:snr
+    # [MODIFIED] Column indices shifted by +1 after 'e' because 'i' was inserted.
+    # col indices: 2:a, 3:e, 4:i, 7:snr
     a_arr = data[:, 2].astype(float)
     e_arr = data[:, 3].astype(float)
-    snr_arr = data[:, 6].astype(float)
+    snr_arr = data[:, 7].astype(float)  # Index 6 -> 7
     ome_arr = 1.0 - e_arr
 
     # Sort for plotting (High SNR on top)
