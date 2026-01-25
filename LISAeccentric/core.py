@@ -1092,38 +1092,110 @@ class LISAeccentric:
             self.noise_file_path = os.path.join(current_dir, 'LISA_noise_ASD.csv')
             self.base_backup_name = 'LISA_noise_ASD_original'
 
-        def generate_n2a5_data(f_min=1e-6, f_max=1.0, n_points=3000):
-            """Generates LISA Noise ASD based on the N2A5 foreground model."""
-            m_sun = 1.9891e30 * sciconsts.G / np.power(sciconsts.c, 3.0)
-
-            # Vectorized S_gal_N2A5
-            def S_gal_N2A5_vec(f):
-                conds = [
-                    (f >= 1.0e-5) & (f < 1.0e-3),
-                    (f >= 1.0e-3) & (f < 10 ** -2.7),
-                    (f >= 10 ** -2.7) & (f < 10 ** -2.4),
-                    (f >= 10 ** -2.4) & (f <= 0.01)
-                ]
-                funcs = [
-                    lambda x: x ** -2.3 * 10 ** -44.62 * 20.0 / 3.0,
-                    lambda x: x ** -4.4 * 10 ** -50.92 * 20.0 / 3.0,
-                    lambda x: x ** -8.8 * 10 ** -62.8 * 20.0 / 3.0,
-                    lambda x: x ** -20.0 * 10 ** -89.68 * 20.0 / 3.0
-                ]
-                return np.piecewise(f, conds, funcs + [0])
-
-            # Vectorized S_n_lisa
-            def S_n_lisa_calc(f):
-                m1 = 5.0e9
-                m2 = sciconsts.c * 0.41 / m1 / 2.0
-                term1 = 20.0 / 3.0 * (1 + (f / m2) ** 2)
-                term2 = 4.0 * (9.0e-30 / (2 * np.pi * f) ** 4 * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23
-                return term1 * term2 / m1 ** 2 + S_gal_N2A5_vec(f)
-
+        def generate_noise_data(self, model='N2A5', f_min=1e-6, f_max=1.0, n_points=3000):
+            """
+            Generates LISA Noise ASD based on the selected model.
+            integrated with Log-Log extrapolation for better physical accuracy.
+            """
+            # 1. 生成目标频率网格
             flist = np.logspace(np.log10(f_min), np.log10(f_max), n_points)
-            Sn_list = S_n_lisa_calc(flist)
-            return flist, np.sqrt(Sn_list)
 
+            if model == 'N2A5':
+                # === N2A5 Analytical Model (unchanged) ===
+                # Constants setup
+                def S_gal_N2A5_vec(f):
+                    conds = [
+                        (f >= 1.0e-5) & (f < 1.0e-3),
+                        (f >= 1.0e-3) & (f < 10 ** -2.7),
+                        (f >= 10 ** -2.7) & (f < 10 ** -2.4),
+                        (f >= 10 ** -2.4) & (f <= 0.01)
+                    ]
+                    funcs = [
+                        lambda x: x ** -2.3 * 10 ** -44.62 * 20.0 / 3.0,
+                        lambda x: x ** -4.4 * 10 ** -50.92 * 20.0 / 3.0,
+                        lambda x: x ** -8.8 * 10 ** -62.8 * 20.0 / 3.0,
+                        lambda x: x ** -20.0 * 10 ** -89.68 * 20.0 / 3.0
+                    ]
+                    return np.piecewise(f, conds, funcs + [0])
+
+                def S_n_lisa_calc(f):
+                    m1 = 5.0e9
+                    m2 = sciconsts.c * 0.41 / m1 / 2.0
+                    term1 = 20.0 / 3.0 * (1 + (f / m2) ** 2)
+                    term2 = 4.0 * (9.0e-30 / (2 * np.pi * f) ** 4 * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23
+                    return term1 * term2 / m1 ** 2 + S_gal_N2A5_vec(f)
+
+                Sn_list = S_n_lisa_calc(flist)
+                return flist, np.sqrt(Sn_list)
+
+            elif model == 'official':
+                # === Official File Loading with Smart Extrapolation ===
+                target_dir = os.path.dirname(self.noise_file_path)
+                source_path = os.path.join(target_dir, "LISA_noise_ASD_official.csv")
+
+                if not os.path.exists(source_path):
+                    print(f"[Noise] Error: Official noise file not found at {source_path}")
+                    return flist, np.zeros_like(flist)
+
+                try:
+                    # 1. 读取并清洗数据
+                    data = np.loadtxt(source_path, delimiter=',')
+                    # 若文件包含表头，解开下面注释:
+                    # data = np.loadtxt(source_path, delimiter=',', skiprows=1)
+
+                    data = data[data[:, 0].argsort()]
+                    f_ref = data[:, 0]
+                    asd_ref = data[:, 1]
+
+                    mask = (f_ref > 0) & (asd_ref > 0)
+                    f_ref = f_ref[mask]
+                    asd_ref = asd_ref[mask]
+
+                    # 2. 准备 Log-Log 空间数据
+                    log_f_ref = np.log10(f_ref)
+                    log_asd_ref = np.log10(asd_ref)
+
+                    # 3. 计算低频端斜率 (Low-f Slope)
+                    # slope = (y2 - y1) / (x2 - x1)
+                    if len(log_f_ref) >= 2:
+                        slope_low = (log_asd_ref[1] - log_asd_ref[0]) / (log_f_ref[1] - log_f_ref[0])
+                    else:
+                        slope_low = 0  # Fallback
+
+                    # 4. 目标 Log 频率
+                    log_f_target = np.log10(flist)
+
+                    # 5. 执行插值 (左侧设为 NaN 以便后续处理，右侧设为 0.0 即 ASD=1.0)
+                    # 注意：right=0.0 意味着 log(ASD)=0 -> ASD=1.0
+                    log_asd_target = np.interp(
+                        log_f_target,
+                        log_f_ref,
+                        log_asd_ref,
+                        left=np.nan,
+                        right=0.0
+                    )
+
+                    # 6. 处理低频 NaN (Power-law Extrapolation)
+                    # y = y0 + slope * (x - x0)
+                    nan_mask = np.isnan(log_asd_target)
+                    if np.any(nan_mask):
+                        # x0 = log_f_ref[0], y0 = log_asd_ref[0]
+                        log_asd_target[nan_mask] = log_asd_ref[0] + \
+                                                   slope_low * (log_f_target[nan_mask] - log_f_ref[0])
+
+                    # 7. 还原回线性空间
+                    asd_final = np.power(10.0, log_asd_target)
+
+                    return flist, asd_final
+
+                except Exception as e:
+                    print(f"[Noise] Error processing official file: {e}")
+                    # 出错时返回默认值
+                    return self.generate_noise_data(model='N2A5', f_min=f_min, f_max=f_max, n_points=n_points)
+
+            else:
+                print(f"[Noise] Error: Unknown model '{model}'")
+                return flist, np.zeros_like(flist)
         def _inject_noise_data(self):
             """
             Internal Method: Force-update the _LISA_NOISE_DATA global variable in PN_waveform.

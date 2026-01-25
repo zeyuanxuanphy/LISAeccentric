@@ -421,41 +421,8 @@ print("=" * 80)
 # --- 5.1 Generate Synthetic Noise Data (N2A5 Model) ---
 print("\n[5.1] Generating Synthetic N2A5 Noise Data")
 print("   Action: Defining complex N2A5 foreground model locally.")
-
-def generate_n2a5_data(f_min=1e-5, f_max=1.0, n_points=3000):
-    """Generates LISA Noise ASD based on the N2A5 foreground model."""
-    m_sun = 1.9891e30 * sciconsts.G / np.power(sciconsts.c, 3.0)
-
-    # Vectorized S_gal_N2A5
-    def S_gal_N2A5_vec(f):
-        conds = [
-            (f >= 1.0e-5) & (f < 1.0e-3),
-            (f >= 1.0e-3) & (f < 10 ** -2.7),
-            (f >= 10 ** -2.7) & (f < 10 ** -2.4),
-            (f >= 10 ** -2.4) & (f <= 0.01)
-        ]
-        funcs = [
-            lambda x: x ** -2.3 * 10 ** -44.62 * 20.0 / 3.0,
-            lambda x: x ** -4.4 * 10 ** -50.92 * 20.0 / 3.0,
-            lambda x: x ** -8.8 * 10 ** -62.8 * 20.0 / 3.0,
-            lambda x: x ** -20.0 * 10 ** -89.68 * 20.0 / 3.0
-        ]
-        return np.piecewise(f, conds, funcs + [0])
-
-    # Vectorized S_n_lisa
-    def S_n_lisa_calc(f):
-        m1 = 5.0e9
-        m2 = sciconsts.c * 0.41 / m1 / 2.0
-        term1 = 20.0 / 3.0 * (1 + (f / m2) ** 2)
-        term2 = 4.0 * (9.0e-30 / (2 * np.pi * f) ** 4 * (1 + 1.0e-4 / f)) + 2.96e-23 + 2.65e-23
-        return term1 * term2 / m1 ** 2 + S_gal_N2A5_vec(f)
-
-    flist = np.logspace(np.log10(f_min), np.log10(f_max), n_points)
-    Sn_list = S_n_lisa_calc(flist)
-    return flist, np.sqrt(Sn_list)
-
 # Execution
-f_new, asd_new = generate_n2a5_data()
+f_new, asd_new = LISAeccentric.Noise.generate_n2a5_data()
 print(f"   Generated Data: {len(f_new)} points.")
 print(f"   Freq Range: [{f_new[0]:.1e}, {f_new[-1]:.1e}] Hz")
 
