@@ -119,36 +119,52 @@ if isinstance(strain_res_list, list) and len(strain_res_list) == 4:
     print(f"      [3] Contribution to Snf  (shape: {strain_res_list[3].shape})")
 else:
     print(f"   Output: {type(strain_res_list)}")
-# --- 0.6 Evolving Characteristic Strain (Object Method) ---
+
+# ==============================================================================
+# 0.6 Evolving Characteristic Strain (Object Method)
+# ==============================================================================
 print("\n[0.6] Evolving Characteristic Strain (Object Method) [NEW]")
-print("   Method: .compute_evolving_strain(tobs_yr=4.0, target_n_points=100)")
-print("   Input : tobs_yr (Integration time), target_n_points (Harmonic downsampling)")
-print("   Desc  : Computes hc by actively evolving the orbit (Peters 1964).")
+print("   Method: .compute_characteristic_strain_evolve(tobs_yr=4.0, target_n_points=100)")
+print("   Desc  : Computes hc by actively evolving the orbit (Peters 1964) and tracks harmonic evolution.")
 
-# --- 0.1 Initialization ---
-print("\n[0.1] Creating a CompactBinary Object")
-print("   Input Units: Mass [M_sun], Distance [kpc], SMA [AU]")
-
-# Instantiate a specific system
-my_binary2 = LISAeccentric.CompactBinary(
-    m1=1e5, m2=30, a=0.26, e=0.9, Dl=765.0,
-    label="Tutorial_Core_Obj",
-    extra={
-        'inclination': 0.7854,  # e.g., mutal inclination [rad] (~45 degrees)
-    }
+# 1. Initialization: Create a system known to evolve significantly (e.g. EMRI-like or close BBH)
+print("\n   [Step 1] Initializing a high-eccentricity evolving system...")
+my_binary_evolve = LISAeccentric.CompactBinary(
+    m1=1e5,      # Primary Mass [M_sun]
+    m2=30.0,     # Secondary Mass [M_sun]
+    a=0.26,      # Semi-major Axis [AU]
+    e=0.9,       # Eccentricity
+    Dl=765.0,    # Luminosity Distance [kpc]
+    label="Evolving_Source_Example"
 )
-# Returns [unified_f_axis, total_hc_spectrum, snapshots_data]
-evolving_strain_res = my_binary2.compute_characteristic_strain_evolve(tobs_yr=0.5, target_n_points=50, plot=True, verbose=True,all_harmonics=False)
 
-if evolving_strain_res is not None:
-    f_axis_evolve, hc_total_evolve, snapshots = evolving_strain_res
-    print(f"   Output: List of 3 Elements")
-    print(f"      [0] Unified Frequency Axis (shape: {f_axis_evolve.shape})")
-    print(f"      [1] Total Integrated Strain (h_c) (shape: {hc_total_evolve.shape})")
-    print(f"      [2] Snapshots List (Length: {len(snapshots)}) - Contains time-step details")
-    print(f"          Example Snapshot[0] keys: {list(snapshots[0].keys()) if len(snapshots)>0 else 'Empty'}")
+# 2. Computation
+print("   [Step 2] Computing evolving strain (T_obs=0.5 yr)...")
+# Returns: [unified_f_axis, total_hc_spectrum, snapshots_data, snr_val]
+evolve_res = my_binary_evolve.compute_characteristic_strain_evolve(
+    tobs_yr=0.5,
+    target_n_points=50,
+    all_harmonics=False,
+    plot=True,
+    verbose=True
+)
+
+# 3. Output Inspection
+if evolve_res is not None:
+    f_axis, hc_total, snapshots, snr = evolve_res
+    print(f"\n   [Step 3] Output Inspection (List of 4 Elements):")
+    print(f"      [0] Unified Frequency Axis (shape: {f_axis.shape})")
+    print(f"          - Range: {f_axis[0]:.1e} Hz to {f_axis[-1]:.1e} Hz")
+    print(f"      [1] Total Integrated Strain (h_c) (shape: {hc_total.shape})")
+    print(f"          - Peak Amplitude: {np.max(hc_total):.4e}")
+    print(f"      [2] Snapshots List (Length: {len(snapshots)})")
+    print(f"          - Contains time-step details (t, f_orb, e, n, hnc...)")
+    print(f"          - Example Keys: {list(snapshots[0].keys()) if len(snapshots)>0 else 'Empty'}")
+    print(f"      [3] Integrated SNR (float)")
+    print(f"          - Value: {snr:.4f}")
 else:
     print("   Output: None (Calculation failed)")
+
 
 # --- 0.7 Serialization (I/O) ---
 print("\n[0.6] Data Serialization (I/O)")
