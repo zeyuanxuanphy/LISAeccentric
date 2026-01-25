@@ -454,7 +454,22 @@ LISAeccentric.Field.run_simulation(
 )
 print("   Status: Simulation completed and saved.")
 ```
+#### Extension: Simulating an Elliptical Galaxy
+The simulation engine can also model massive elliptical galaxies (e.g., M87-like) by switching the `galaxy_type` to `'Elliptical'` and adjusting the structural parameters ($M_{\rm gal}$, $R_e$).
 
+**Example:**
+```python
+LISAeccentric.Field.run_simulation(
+    galaxy_type='Elliptical',
+    # Structure (Massive Galaxy at 16.8 Mpc)
+    distance_Mpc=16.8, M_gal=1.0e12, Re=8000.0,
+    # Physics (Heavier BHs)
+    m1=30.0, m2=30.0, mp=0.6,
+    # Control (Smaller run for demo)
+    ell_n_sim=50000, ell_target_N=20000
+)
+print("   Status: Elliptical simulation saved.")
+```
 #### `LISAeccentric.Field.get_progenitor()`
 Retrieves the properties of the binary progenitors (initial states at formation) from the simulated library. These represent the system parameters right after being perturbed to high eccentricity and start evolving via GW emission. 
 
@@ -483,3 +498,107 @@ print(f"   Output List Length: {len(field_progs)}")
 <p align="left">
 <img src="./images/Field_lifetime.png" width="500">
 </p>
+
+#### `LISAeccentric.Field.sample_eccentricities()`
+Randomly samples $N$ merger eccentricities for Field BBHs at the LIGO frequency band (10Hz).
+* **Input**:
+    * `n` (int): Number of eccentricity samples to generate.
+    * `galaxy_type` (str, optional): Target environment `'MW'` (Milky Way) or `'Elliptical'`. Default: `'MW'`.
+    * `plot` (bool, optional): If `True`, plots the CDF of $\log_{10}(e)$.
+* **Output**:
+    * `gc_e_samples` (NumPy Array): A 1D array containing the sampled eccentricity values at 10Hz.
+
+**Example:**
+```python
+field_e_samples = LISAeccentric.Field.sample_eccentricities(
+    n=5000, galaxy_type='MW', plot=True
+)
+print(f"   Output Shape: {np.shape(field_e_samples)}")
+```
+* **Output**:
+    ```
+   Output Shape: (5000,)
+    ```
+<p align="left">
+<img src="./images/Fieldecc_LIGO.png" width="500">
+</p>
+
+#### `LISAeccentric.Field.get_snapshot()`
+Generates a "snapshot" containing BBH systems that currently exist in the Galactic Field. These systems represent binaries that have been excited to high eccentricity via fly-by interactions and are predicted to merge within the specified future time window (`t_window_Gyr`).
+* **Input**:
+    * `mode` (str, optional): Sampling mode. Default: `'single'`.
+        * `'single'`: Generates one random realization of the galaxy based on the calculated merger rate.
+        * `'multi'`: (MW only) Stacks multiple realizations to reduce statistical variance.
+        * `'forced'`: Randomly selects `n_systems` regardless of physical rates (useful for testing).
+    * `galaxy_type` (str, optional): Target environment `'MW'` or `'Elliptical'`. Default: `'MW'`.
+    * `t_obs` (float, optional): Observation duration in years (defines the SNR accumulation window). Default: `10.0`.
+    * `t_window_Gyr` (float, optional): The future time window to look for merging systems.
+        * **Note**: This should ideally **NOT** exceed the galaxy age (e.g., 10 Gyr). Extending the window beyond the age implies looking for systems that would have likely been removed or merged earlier in the simulation history.
+    * `n_realizations` (int, optional): Number of realizations (only for `mode='multi'`). Default: `10`.
+    * `n_systems` (int, optional): Number of systems to force-sample (only for `mode='forced'`). Default: `500`.
+    * `plot` (bool, optional): If `True`, plots the snapshot distribution. Default: `True`.
+* **Output**:
+    * A list of `CompactBinary` objects representing the detectable sources.
+
+**Example:**
+```python
+field_snapshot_mw = LISAeccentric.Field.get_snapshot(
+    mode='single', t_obs=10.0, t_window_Gyr=10.0, galaxy_type='MW', plot=True
+)
+print(f"   Output List Length: {len(field_snapshot_mw)}")
+```
+* **Output**:
+    ```
+   Output List Length: 72
+    ```
+<p align="left">
+<img src="./images/Field_snapshot.png" width="500">
+</p>
+
+### 4. Waveform & Analysis Pipeline
+This module provides a low-level functional interface to generate and analyze Eccentric Gravitational Waveforms. 
+
+#### `LISAeccentric.Waveform.compute_waveform()`
+Generates the time-domain waveform ($h_+, h_\times$) using PN evolution model.
+
+* **Input**:
+     * **Input Mode Selector**:
+        * `input_mode` (str, optional): Determines the interpretation of the `a_au` parameter. Default: `'a_au'`.
+            * `'a_au'`: Input `a_au` is treated as **Semi-major Axis [AU]**.
+            * `'forb_Hz'`: Input `a_au` is treated as **Orbital Frequency [Hz]**.
+            * `'fangular_Hz'`: Input `a_au` is treated as **Angular/Peak Frequency [Hz]** (Solver finds corresponding $f_{orb}$).
+        * `a_au` (float): The value corresponding to the selected `input_mode`.
+    * **Physical Parameters**:
+        * `m1_msun`, `m2_msun` (float): Component masses [$M_\odot$].
+        * `e` (float): Orbital eccentricity.
+        * `Dl_kpc` (float): Luminosity distance [kpc].
+        * `tobs_yr` (float): Observation duration [years].
+        * `theta`, `phi` (float, optional): Sky position angles [rad]. Default: $\pi/4$.
+        * `initial_orbital_phase` (float, optional): Initial mean anomaly/phase. Default: 0.
+
+    * **Model & Sampling**:
+        * `PN_orbit`, `PN_reaction` (int, optional): Post-Newtonian orders. Default: 3, 2.
+        * `points_per_peak` (int, optional): Adaptive sampling density per periastron. Default: 50.
+        * `ts` (float, optional): Fixed time step [seconds]. If set, overrides adaptive sampling.
+    * `plot` (bool, optional): If `True`, plots the waveform.
+* **Output**:
+    * A list containing three NumPy arrays: `[time_vector, h_plus, h_cross]`.
+
+**Example:**
+```python
+wf_A = LISAeccentric.Waveform.compute_waveform(
+    m1_msun=10.0, m2_msun=10.0,
+    a_au=0.15, e=0.7,   # <--- Input is au
+    Dl_kpc=8.0, tobs_yr=1.0,
+    input_mode='a_au',
+    plot=True
+)
+
+wf_B = LISAeccentric.Waveform.compute_waveform(
+    m1_msun=10.0, m2_msun=10.0,
+    a_au=0.002, e=0.7,  # <--- Input 'a_au' actually represents (f_orb [Hz])
+    Dl_kpc=8.0, tobs_yr=1.0,
+    input_mode='forb_Hz',
+    plot=False
+)
+```
