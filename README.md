@@ -316,7 +316,5 @@ gn_snapshot = LISAeccentric.GN.get_snapshot(
     rate_gn=2.0, age_ync=6.0e6, n_ync_sys=100, max_bh_mass=50.0, plot=True
 )
 ```
-    <p align="left">
-  <img src="./images/GNsnapshot.png" width="500">
-   </p>
+
 
