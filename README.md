@@ -58,7 +58,7 @@ python your_script.py
 
 ## Features & Usage Examples
 
-### Global Configuration
+### 1. Global Configuration
 
 #### `LISAeccentric.set_output_control`
 Sets the global verbosity and warning suppression levels.
@@ -73,41 +73,50 @@ Sets the global verbosity and warning suppression levels.
 LISAeccentric.set_output_control(verbose=False, show_warnings=False)
 ```
 
-### 0. CompactBinary Core (Object-Oriented API)
+### 2. CompactBinary Core (Object-Oriented API)
 The fundamental unit of the package. This class handles the physics, evolution, and I/O for a single binary system.
 
-#### 0.1 Initialization
+### 2. CompactBinary Core (Object-Oriented API)
+The fundamental unit of the package. This class handles the physics, evolution, and I/O for a single binary system.
+
+#### `LISAeccentric.CompactBinary()`
 To create a binary system object:
-* **Input Units**: Mass [$M_\odot$], Distance [kpc], SMA [AU].
 * **Input**:
-    * `m1`, `m2` (float): Masses.
-    * `a` (float): Semi-major axis.
+    * `m1`, `m2` (float): Masses. [m_sun]
+    * `a` (float): Semi-major axis. [au]
     * `e` (float): Eccentricity.
-    * `Dl` (float): Luminosity distance.
+    * `Dl` (float): Luminosity distance. [kpc]
     * `label` (str): Identifier.
+    * `extra` (dict, optional): Dictionary for storing extended parameters (e.g., SNR, inclination **[rad]**, spin, lifetime).
 * **Output**: `CompactBinary` object.
 
 **Example:**
 ```python
-# Instantiate a specific system
 my_binary = LISAeccentric.CompactBinary(
-    m1=10.0, m2=10.0, a=0.26, e=0.985, Dl=8.0, label="Tutorial_Core_Obj"
+    m1=10.0, m2=10.0, a=0.26, e=0.985, Dl=8.0, 
+    label="Tutorial_Core_Obj",
+    extra={
+        'snr': 25.4, 
+        'inclination': 0.7854,  # [rad] (~45 degrees)
+        'lifetime_yr': 1.5e5
+    }
 )
 print(f"   Output Object: {my_binary}")
 print(f"   Type Inspection: {type(my_binary)}")
+# You can also access extra data directly
+print(f"   SNR: {my_binary.extra['snr']}")
+print(f"   Inclination: {my_binary.extra['inclination']:.4f} rad")
 ```
-
 * **Output**:
   ```
-   Output Object: <CompactBinary [Tutorial_Core_Obj]: M=10.0+10.0 m_sun, a=0.26AU, e=0.9850, Dl=8.0kpc>
-   Type Inspection: <class 'LISAeccentric.core.CompactBinary'>
+ Output Object: <CompactBinary [Tutorial_Core_Obj]: M=10.0+10.0 m_sun, a=2.600e-01AU, e=0.9850, Dl=8.0kpc | snr=25.400, inclination=0.785, lifetime_yr=1.50e+05>
+ Type Inspection: <class 'LISAeccentric.core.CompactBinary'>
+ SNR: 25.4
+ Inclination: 0.7854 rad
   ```
-#### 0.2 Scalar Analysis (Merger Time & SNR)
-Methods to compute key scalar properties of the binary system directly from its attributes.
 
-**A. Merger Time**
-Calculates the remaining time until merger due to gravitational wave emission.
-* **Method**: `compute_merger_time()`
+#### `.compute_merger_time()`
+Calculates the remaining time until the merger due to gravitational wave emission.
 * **Input**: None (uses object attributes).
 * **Output**:
     * `t_merge_yr` (float): Time to merger in years.
@@ -121,9 +130,9 @@ print(f"      Return Value: {t_merge_yr:.4e} [years] (Type: float)")
   ```
          Return Value: 4.8407e+06 [years] (Type: float)
   ```
-**B. Analytical SNR**
+
+#### `.compute_snr_analytical()`
 Computes the sky-averaged Signal-to-Noise Ratio (SNR) for the LISA detector. This method supports two calculation modes: full integration over harmonics (default) or a fast approximation.
-* **Method**: `compute_snr_analytical()`
 * **Input**:
     * `tobs_yr` (float): Observation duration in years.
     * `quick_analytical` (bool, optional):
@@ -136,7 +145,6 @@ Computes the sky-averaged Signal-to-Noise Ratio (SNR) for the LISA detector. Thi
   
 **Example:**
 ```python
-# B. Analytical SNR
 snr_val = my_binary.compute_snr_analytical(tobs_yr=4.0, verbose=False, quick_analytical=False)
 print(f"      Return Value: {snr_val:.4f} (Type: float)")
 ```
@@ -144,9 +152,9 @@ print(f"      Return Value: {snr_val:.4f} (Type: float)")
   ```
       Return Value: 10.9644 (Type: float)
   ```
-#### 0.3 Orbital Evolution
+
+#### `.evolve_orbit()`
 Predicts the future state of the binary system by evolving its orbital parameters forward in time due to gravitational wave emission (Peters64 formula).
-* **Method**: `evolve_orbit()`
 * **Input**:
     * `delta_t_yr` (float): Time duration to evolve the system in years.
     * `update_self` (bool, optional):
@@ -166,24 +174,24 @@ print(f"      Return Tuple: a={a_new} au, e={e_new}")
   ```
         Return Tuple: a=0.25991616861323 au, e=0.9849951873952284
   ```
-#### 0.4 Waveform Generation (Object Method)
+  
+#### `.compute_waveform()`
 A convenience method to compute the Gravitational Wave (GW) waveform specifically for the initialized binary system. It automatically utilizes the object's internal physical attributes ($m_1, m_2, a, e, D_L$) and supports adaptive time sampling.
-* **Method**: `.compute_waveform()`
 * **Input**:
-    * **Observation**:
+    * Observation:
         * `tobs_yr` (float): Observation duration in years.
         * `initial_orbital_phase` (float, optional): Initial mean anomaly $l_0$ [rad]. Default is 0.
-    * **Source Geometry**:
+    * Source Geometry:
         * `theta` (float, optional): Line-of-sight inclination angle in source frame $\theta$ [rad]. Default is $\pi/4$.
         * `phi` (float, optional): Line-of-sight azimuthal angle in source frame $\phi$ [rad]. Default is $\pi/4$.
-    * **Physics Model**:
+    * Physics Model:
         * `PN_orbit` (int, optional): PN order for conservative orbital dynamics (0, 1, 2, 3). Default is 3.
         * `PN_reaction` (int, optional): PN order for radiation reaction (0, 1, 2). Default is 2.
-    * **Computational Control**:
+    * Computational Control:
         * `ts` (float, optional): Fixed sampling time step [s]. If `None` (default), uses adaptive sampling.
         * `points_per_peak` (int, optional): Resolution for adaptive sampling (points per periastron passage). Default is 50.
         * `max_memory_GB` (float, optional): Safety limit for array size in GB. Default is 16.0.
-    * **Output Control**:
+    * Output Control:
         * `plot` (bool, optional): If `True`, plots the $h_+$ waveform.
         * `verbose` (bool, optional): Controls standard output printing.
 * **Output**:
@@ -202,9 +210,8 @@ wf_data_obj = my_binary.compute_waveform(
   <img src="./images/waveformeg.png" width="500">
 </p>
 
-#### 0.5 Characteristic Strain (Object Method)
+#### `.compute_characteristic_strain()`
 Computes the characteristic strain spectrum ($h_c$) for the binary system by decomposing the signal into orbital harmonics.
-* **Method**: `.compute_characteristic_strain()`
 * **Input**:
     * `tobs_yr` (float): Integration time in years.
     * `plot` (bool, optional): If `True`, generates a spectrum plot.
@@ -225,13 +232,12 @@ strain_res_list = my_binary.compute_characteristic_strain(tobs_yr=4.0, plot=True
   <img src="./images/characteristic.png" width="500">
 </p>
 
-#### 0.6 Serialization (I/O)
+#### `.to_list()` `.from_list()`
 Methods to convert `CompactBinary` objects to and from list formats, facilitating data storage (e.g., to CSV/NumPy files) and retrieval.
-
-* **Method A**: `.to_list(schema='snapshot_std')`
-    * **Input**: `schema` (str) - formatting standard (default: `['label', 'Dl', 'a', 'e', 'm1', 'm2', 'snr']`).
+* **.to_list()**: 
+    * **Input**: `schema` (str) - formatting standard (default: snapshot_std, i.e., `['label', 'Dl', 'a', 'e', 'm1', 'm2', 'snr']`).
     * **Output**: A list representing the system's data.
-* **Method B**: `.from_list(data_list, schema='snapshot_std')`
+* **.from_list()**: 
     * **Input**: `data_list` (list) - raw data values; `schema` (str).
     * **Output**: A new `CompactBinary` object instantiated from the list.
 
@@ -254,3 +260,48 @@ Methods to convert `CompactBinary` objects to and from list formats, facilitatin
    B. from_list(data_list=..., schema='snapshot_std')
       Output: <CompactBinary [Imp_Sys]: M=50.0+50.0 m_sun, a=0.50AU, e=0.9000, Dl=16.8kpc, SNR=0.00>
     ```
+### 3. Population analysis
+#### 3.1 Galactic Nuclei (GN)
+#### ` LISAeccentric.GN.sample_eccentricities()`
+Randomly samples $N$ merger eccentricities for BBHs formed in Galactic Nuclei, defined at the LIGO frequency band (10Hz).
+* **Input**:
+    * `n_samples` (int): Number of eccentricity samples to generate.
+    * `max_bh_mass` (float, optional): Maximum Black Hole mass to consider for the population filter [$M_\odot$]. Default is 50.
+    * `plot` (bool, optional): If `True`, plots the Cumulative Distribution Function (CDF) of $\log_{10}(e)$.
+* **Output**:
+    * `gn_e_samples` (NumPy Array): A 1D array containing the sampled eccentricity values at 10Hz.
+
+**Example:**
+```python
+gn_e_samples = LISAeccentric.GN.sample_eccentricities(
+    n_samples=5000, max_bh_mass=50.0, plot=True
+)
+print(f"   Output Shape: {np.shape(gn_e_samples)}")
+print(f"   Mean Eccentricity: {np.mean(gn_e_samples)}")
+```
+* **Output**:
+    ```
+    Output Shape: (5000,)
+    Mean Eccentricity: 3.791297808628803e-05
+    ```
+    <p align="left">
+  <img src="./images/GNecc_LIGO.png" width="500">
+   </p>
+#### `LISAeccentric.GN.get_progenitor()`
+Retrieves the properties of the binary progenitors (initial states) from the underlying population catalog. These are the systems *before* they evolve to merger.
+* **Input**:
+    * `n_inspect` (int, optional): Number of random systems to retrieve for inspection. Default is 3.
+* **Output**:
+    * A list of `CompactBinary` objects representing the progenitor systems.
+
+**Example:**
+```python
+# --- 1.2 Inspect Progenitor Population ---
+print("\n[1.2] Inspecting Progenitor Initial States")
+print("   Input: n_inspect=3")
+
+# Returns: List of CompactBinary objects
+gn_progenitors = LISAeccentric.GN.get_progenitor(n_inspect=3)
+print(f"   Output List Length: {len(gn_progenitors)}")
+if len(gn_progenitors) > 0:
+    print(f"   Sample Item: {gn_progenitors[0]}")
