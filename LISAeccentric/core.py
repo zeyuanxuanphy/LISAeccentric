@@ -340,6 +340,39 @@ class CompactBinary:
             hc_cal.plot_single_system_results(res)
         return res
 
+    @mute_if_global_verbose_false
+    def compute_fpeak(self, verbose=True):
+        """
+        Calculate GW Peak Frequency [Hz] using Wen (2003) approximation.
+        Formula: f_peak ~ f_orb * (1+e)^1.1954 / (1-e)^1.5
+        """
+        if self.a <= 0: return 0.0
+
+        # Constants in SI
+        G_si = sciconsts.G
+        # Solar mass in kg
+        M_sun_kg = 1.9884e30
+
+        M_total_si = (self.m1 + self.m2) * M_sun_kg
+        a_m = self.a * sciconsts.au
+
+        # f_orb in Hz
+        f_orb = (1.0 / (2 * np.pi)) * np.sqrt(G_si * M_total_si / (a_m ** 3))
+
+        e = self.e
+        if e < 0.0: e = 0.0
+        if e >= 1.0: e = 0.999999
+
+        factor = np.power(1 + e, 1.1954) / np.power(1 - e, 1.5)
+        f_peak = f_orb * factor
+
+        if verbose:
+            print(f"[CompactBinary] f_peak = {f_peak:.4e} Hz (a={self.a:.2f} AU, e={e:.4f})")
+
+        # Store in extra
+        self.extra['f_peak_Hz'] = f_peak
+        return f_peak
+
     @classmethod
     def from_list(cls, data_list: list, schema: str, aux_params: dict = None):
         """

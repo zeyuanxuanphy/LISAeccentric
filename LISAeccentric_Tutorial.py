@@ -167,21 +167,6 @@ gn_snapshot = LISAeccentric.GN.get_snapshot(
 )
 print(f"   Output List Length: {len(gn_snapshot)} systems")
 
-# --- 1.4 Calculate Peak Frequency ---
-print("\n[1.4] Calculating GW Peak Frequency (f_peak)")
-print("   Input: A highly eccentric system (e -> 1)")
-
-if len(gn_snapshot) > 0:
-    # Use actual system from snapshot
-    sys = gn_snapshot[0]
-    f_peak = LISAeccentric.GN.calculate_fpeak_frequency(system=sys)
-    print(f"   Return Value: f_peak = {f_peak:.4e} Hz (Derived from a={sys.a:.2e}, e={sys.e:.4f})")
-else:
-    # Fallback manual calculation
-    f_peak = LISAeccentric.GN.calculate_fpeak_frequency(m1=30, m2=30, a_au=0.1, e=0.99)
-    print(f"   Return Value: f_peak = {f_peak:.4e} Hz (Manual Params)")
-
-
 # ==============================================================================
 # MODULE 2: GLOBULAR CLUSTERS (GC)
 # ==============================================================================
