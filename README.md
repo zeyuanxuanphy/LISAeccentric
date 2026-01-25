@@ -575,7 +575,6 @@ Generates the time-domain waveform ($h_+, h_\times$) using PN evolution model.
         * `tobs_yr` (float): Observation duration [years].
         * `theta`, `phi` (float, optional): Sky position angles [rad]. Default: $\pi/4$.
         * `initial_orbital_phase` (float, optional): Initial mean anomaly/phase. Default: 0.
-
     * **Model & Sampling**:
         * `PN_orbit`, `PN_reaction` (int, optional): Post-Newtonian orders. Default: 3, 2.
         * `points_per_peak` (int, optional): Adaptive sampling density per periastron. Default: 50.
@@ -586,19 +585,78 @@ Generates the time-domain waveform ($h_+, h_\times$) using PN evolution model.
 
 **Example:**
 ```python
-wf_A = LISAeccentric.Waveform.compute_waveform(
+
+# Shift specific initial phase to show periastron GW burst
+e_val = 0.99
+init_phase = -5*np.pi * np.power(1 - e_val, 1.5)
+
+waveform_data = LISAeccentric.Waveform.compute_waveform(
+    # --- System Params ---
     m1_msun=10.0, m2_msun=10.0,
-    a_au=0.15, e=0.7,   # <--- Input is au
-    Dl_kpc=8.0, tobs_yr=1.0,
+    a_au=0.1, e=e_val,          # <--- Input represents SMA, a = 1 au
+    Dl_kpc=8.0, 
     input_mode='a_au',
-    plot=True
+    tobs_yr=0.1,
+    initial_orbital_phase=init_phase,
+    theta=np.pi/4, phi=np.pi/4,
+    PN_orbit=3, PN_reaction=2,
+    points_per_peak=50,         # Adaptive sampling resolution
+    plot=True, verbose=True
 )
 
-wf_B = LISAeccentric.Waveform.compute_waveform(
+waveform_data_B = LISAeccentric.Waveform.compute_waveform(
     m1_msun=10.0, m2_msun=10.0,
-    a_au=0.002, e=0.7,  # <--- Input 'a_au' actually represents (f_orb [Hz])
-    Dl_kpc=8.0, tobs_yr=1.0,
-    input_mode='forb_Hz',
+    a_au=1e-5, e=0.7,  # <--- 2nd Example: When input_mode='forb_Hz', input 'a_au' actually represents orbital frequency (f_orb =1e-5 Hz) 
+    Dl_kpc=8.0, tobs_yr=0.1,
+    input_mode='forb_Hz', ts = 10, # <--- 2nd Example: ts will turn off adaptive sampling and fix the sample rate of the waveform as one point per 10 s
     plot=False
-)
 ```
+* **Output**:
+<p align="left">
+<img src="./images/egwaveform0.png" width="500">
+</p>
+
+#### Data Inspection & Visualization
+After generation, it is crucial to verify the data structure, calculate the sampling interval ($\Delta t$), and visualize the waveform details (e.g., the bursty structure at periastron).
+
+* **Key Step**: Calculate `dt` from the first two time points (`t[1] - t[0]`).
+* **Visualization**: Plotting a subset (e.g., first 1000 points) allows for a quick check of the polarization phases.
+
+**Example:**
+```python
+    t_vec, h_plus, h_cross = waveform_data[0], waveform_data[1], waveform_data[2]
+
+    print(f"   Output Structure: List of 3 Numpy Arrays")
+    print(f"      t_vec shape : {t_vec.shape}")
+    print(f"      h_plus shape: {h_plus.shape}")
+    print(f"      h_cross shape: {h_cross.shape}")
+
+    # CRITICAL: Calculate Sampling Interval (dt) for next steps
+    # We assume uniform sampling here (or check adaptive).
+    dt_val_sec = t_vec[1] - t_vec[0]
+    print(f"   Sample time dt    : {dt_val_sec:.4e} seconds (Passed to next step)")
+
+    # Plot first 1000 points to see the burst structure
+    plt.figure(figsize=(10, 4))
+    N_plot = 500
+    plt.plot(t_vec[:N_plot], h_plus[:N_plot], label=r'$h_+$', alpha=0.8)
+    plt.plot(t_vec[:N_plot], h_cross[:N_plot], label=r'$h_\times$', alpha=0.8, ls='--')
+    plt.xlabel('Time [s]')
+    plt.ylabel('Strain')
+    plt.title(f'Waveform Zoom (First {N_plot} points)')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+```
+* **Output**:
+    ```
+     Output Structure: List of 3 Numpy Arrays
+      t_vec shape : (707819,)
+      h_plus shape: (707819,)
+      h_cross shape: (707819,)
+   Sample time dt   : 4.4554e+00 seconds (Passed to next step)
+    ```
+<p align="left">
+<img src="./images/egwaveform0.png" width="500">
+</p>
