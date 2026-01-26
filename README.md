@@ -20,7 +20,7 @@
 
 * Generate PN-based, time-domain waveforms for eccentric binaries (3PN, non-spinning). [PhysRevD.82.024033]
 * Evolve orbital parameters throughout the inspiral stage. [PhysRev.136.B1224]
-* Compute the LISA detector response for a single Michelson signal extracted from vertex 1. [PhysRevD.67.022001]
+* Compute the LISA detector response for a single Michelson signal. [PhysRevD.67.022001]
 * Evaluate characteristic strain ($h_c$) and stochastic backgrounds. [PhysRevD.110.023020]
 * Calculate signal-to-noise ratio (SNR) and noise-weighted inner products for time-domain waveforms.
 
