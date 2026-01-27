@@ -1067,7 +1067,7 @@ def compute_h_arrays_full(evec, uvec, xvec, phi, M, smr, R, theta, dt, PN_orbit)
         hcrossv[i] = 2 * amp_fac * cos_theta * term_cross
 
     return rvec, dpsi_dt_vec, psiresult, hplusv, hcrossv
-def eccGW_waveform(f00, e0, timescale, m1, m2, theta, phi, R, l0=0, ts=None, PN_orbit=3, PN_reaction=2,
+def eccGW_waveform0(f00, e0, timescale, m1, m2, theta, phi, R, l0=0, ts=None, PN_orbit=3, PN_reaction=2,
                     N=50, max_memory_GB=16.0, verbose=True):
     # 如果 verbose 为 True，vprint 就是 print；否则 vprint 是一个什么都不做的空函数
     vprint = print if verbose else lambda *args, **kwargs: None
@@ -1459,6 +1459,412 @@ def eccGW_waveform(f00, e0, timescale, m1, m2, theta, phi, R, l0=0, ts=None, PN_
     xlast = xresult[-1]
     flast = 1 / 2 / pi / M * np.power(xlast, 3 / 2)
     vprint(f'Evolution: {timescale / years} yr. f_initial: {f0} [Hz], f_final: {flast} [Hz]')
+    # =================================================================
+    # 4. 波形生成与采样
+    # =================================================================
+    if ts is None:
+        controlnum2 = int(N * timescale * flast * np.power(1 - eresult[-1], -3 / 2)) + 1000
+    else:
+        controlnum2 = int(timescale / ts)
+    if controlnum2 < 100: controlnum2 = 100
+
+    # Memory Check
+    est_memory_bytes = controlnum2 * 12 * 8
+    max_bytes = max_memory_GB * (1024 ** 3)
+    if est_memory_bytes > max_bytes:
+        safe_controlnum2 = int(max_bytes / (12 * 8))
+        print(f"[WARNING] Memory limit exceeded. Downgrading points: {controlnum2} -> {safe_controlnum2}")
+        controlnum2 = safe_controlnum2
+
+    t3_temp = np.linspace(0, timescale, num=controlnum2)
+    dt = t3_temp[1] - t3_temp[0]
+
+    # [CHECK 3] dt check
+    if dt <= 0:
+        print("Warning: dt=0, forced to 1e-16 to avoid ZeroDivisionError.")
+        dt = 1e-16
+
+    vprint(f'Waveform sampling: {1 / dt} Hz, Total points: {len(t3_temp)}')
+
+    evec = np.interp(t3_temp, t_temp, eresult)
+    xvec = np.interp(t3_temp, t_temp, xresult)
+    lvec = np.interp(t3_temp, t_temp, lresult)
+    ephivec = e_phi_func(evec, xvec)
+
+    start_u = time.time()
+    uvec = solve_u_series_robust(
+        lvec.astype(np.float64), evec.astype(np.float64), xvec.astype(np.float64),
+        ephivec.astype(np.float64), float(smr), int(PN_orbit)
+    )
+
+    start_h = time.time()
+    rvec, dpsi_dt_vec, psiresult, hplusv, hcrossv = compute_h_arrays_full(
+        evec.astype(np.float64), uvec.astype(np.float64), xvec.astype(np.float64),
+        float(phi), float(M), float(smr), float(R), float(theta), float(dt), int(PN_orbit)
+    )
+
+    return [t3_temp, hplusv, hcrossv]
+
+def eccGW_waveform(f00, e0, timescale, m1, m2, theta, phi, R, l0=0, ts=None, PN_orbit=3, PN_reaction=2,
+                    N=50, max_memory_GB=16.0, verbose=True):
+    # 如果 verbose 为 True，vprint 就是 print；否则 vprint 是一个什么都不做的空函数
+    vprint = print if verbose else lambda *args, **kwargs: None
+
+    m1=m1
+    m2=m2
+    R=R
+    timescale=timescale
+    # === [新增保护逻辑] 零偏心率自动修正 ===
+    if e0 == 0:
+        print("Warning: e0=0 is not supported by this eccentric template (singularities in PN terms).")
+        print("         Automatically resetting e0 to 1e-5 to maintain stability.")
+        e0 = 1e-5
+    emin=0
+    # ========================================
+    vprint('================Ecc Inspiral GW waveform================')
+    # =================================================================
+    # 1. 内部辅助函数定义
+    # =================================================================
+    def J(n, x):
+        return scipy.special.jv(n, x)
+    def Jtilt(n, x):
+        return 0.5 * (J(n - 1, x) - J(n + 1, x))
+    #print(f"Loading 1.5PN Tail enhancement table (e0={e0:.6f})...")
+    # --- 缓存与预计算逻辑 ---
+    dist_to_1 = 1.0 - e0
+    if dist_to_1 < 0: dist_to_1 = 0
+    margin = min(0.0001, dist_to_1 * 0.05)
+    required_safe_e0 = e0 + margin
+    limit_e = 0.99999
+    if required_safe_e0 > limit_e: required_safe_e0 = limit_e
+    # [FIX] 使用 os.path.dirname(__file__) 锁定当前脚本目录
+    # 这样无论你在哪里运行脚本，它都会在脚本所在的目录下寻找/创建 .npz 文件
+    # 如果是交互式环境(无 __file__)，则回退到 getcwd
+    try:
+        current_script_dir = os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        current_script_dir = os.getcwd()
+
+    CACHE_FILE = os.path.join(current_script_dir, 'eccGW_1p5PN_table.npz')
+    table_loaded = False
+    kE_vals = None
+    kJ_vals = None
+    e_grid = None
+    if os.path.exists(CACHE_FILE):
+        try:
+            data = np.load(CACHE_FILE)
+            cached_e_grid = data['e_grid']
+            cached_max_e = cached_e_grid[-1]
+            if cached_max_e >= required_safe_e0 - 1e-8:
+                #print(f"   Found valid table (max_e={cached_max_e:.6f}). Loading...")
+                e_grid = cached_e_grid
+                kE_vals = data['kE_vals']
+                kJ_vals = data['kJ_vals']
+                table_loaded = True
+            else:
+                pass
+                #print(f"   [Cache Miss] Range insufficient. Recomputing...")
+        except Exception as e:
+            pass
+            #print(f"   [Cache Warning] Failed to load cache: {e}. Recomputing...")
+    if not table_loaded:
+        def compute_kappa_single_point(e):
+            e2 = e * e
+            if e < 1e-6:
+                return 1.0 + 1.625 * e2, 1.0 + 0.875 * e2
+            local_N = int(30.0 / np.power(1.0 - e, 1.5)) + 20
+            if local_N > 100000: local_N = 100000
+
+            inv_e = 1.0 / e
+            inv_e2 = inv_e * inv_e
+            inv_e4 = inv_e2 * inv_e2
+
+            cE1 = -e2 - 3 * inv_e2 + inv_e4 + 3
+            cE2 = 1.0 / 3.0 - inv_e2 + inv_e4
+            cE3 = -3 * e - 4 * inv_e2 * inv_e + 7 * inv_e
+            cE4 = e2 + inv_e2 - 2
+            cE5 = inv_e2 - 1
+
+            sqrt_1_e2 = np.sqrt(1 - e2)
+            inv_e3 = inv_e2 * inv_e
+            cJ1 = -2 * inv_e4 - 1 + 3 * inv_e2
+            cJ2 = 2 * (e + inv_e3 - 2 * inv_e)
+            cJ3 = -inv_e + 2 * inv_e3
+            cJ4 = 2 * (1 - inv_e2)
+
+            sum_E = 0.0
+            sum_J = 0.0
+
+            for p in range(1, local_N + 1):
+                pe = p * e
+                jpe = scipy.special.jv(p, pe)
+                jp_minus_1 = scipy.special.jv(p - 1, pe)
+                jtpe = jp_minus_1 - inv_e * jpe
+                p2 = p * p
+                term_E = ((cE1 * p2 + cE2) * jpe ** 2 + cE3 * p * jtpe * jpe + (cE4 * p2 + cE5) * jtpe ** 2)
+                current_add_E = 0.25 * (p * p2) * term_E
+                sum_E += current_add_E
+                term_J = (cJ1 * p * jpe ** 2 + (cJ2 * p2 + cJ3) * jtpe * jpe + cJ4 * p * jtpe ** 2)
+                current_add_J = 0.5 * p2 * sqrt_1_e2 * term_J
+                sum_J += current_add_J
+                if p > 20:
+                    abs_sum_E = abs(sum_E)
+                    if abs_sum_E > 1e-100:
+                        if abs(current_add_E) / abs_sum_E < 1e-13: break
+                    elif abs(current_add_E) < 1e-13:
+                        break
+            return sum_E, sum_J
+
+        target_max_e = max(0.95, required_safe_e0)
+        if target_max_e > limit_e: target_max_e = limit_e
+        print(f"   Fast-computation table not found. Building new table up to e={target_max_e}...")
+
+        grid_size = 500
+        split_point = max(0.9, target_max_e - 0.05)
+        if split_point > target_max_e: split_point = target_max_e * 0.9
+        e_grid_lin = np.linspace(0, split_point, int(grid_size * 0.3))
+        log_start = np.log10(1.0 - split_point)
+        log_end = np.log10(1.0 - target_max_e)
+        e_grid_log = 1.0 - np.logspace(log_start, log_end, int(grid_size * 0.7))
+        e_grid_log = np.sort(e_grid_log)
+        e_grid = np.unique(np.concatenate((e_grid_lin, e_grid_log)))
+        if e_grid[-1] < target_max_e: e_grid = np.append(e_grid, target_max_e)
+
+        t_start_table = time.time()
+        n_grid = len(e_grid)
+        kE_vals = np.empty(n_grid)
+        kJ_vals = np.empty(n_grid)
+        for i in range(n_grid):
+            val = e_grid[i]
+            kE, kJ = compute_kappa_single_point(val)
+            kE_vals[i] = kE
+            kJ_vals[i] = kJ
+            if i % 100 == 0:
+                print(f"     Computing... {i}/{n_grid} (e={val:.5f})")
+        vprint(f"   Table computed in {time.time() - t_start_table:.2f}s.")
+        try:
+            np.savez(CACHE_FILE, e_grid=e_grid, kE_vals=kE_vals, kJ_vals=kJ_vals)
+            print(f"   Table saved to '{CACHE_FILE}'.")
+        except Exception as e:
+            print(f"   [Warning] Failed to save cache: {e}")
+
+    kappaE_interp = sci_interpolate.interp1d(e_grid, kE_vals, kind='cubic', fill_value="extrapolate")
+    kappaJ_interp = sci_interpolate.interp1d(e_grid, kJ_vals, kind='cubic', fill_value="extrapolate")
+
+    def kappaE(e):
+        if e > e_grid[-1]: return kE_vals[-1]
+        if e < 1e-4: return 1.0
+        return kappaE_interp(e)
+
+    def kappaJ(e):
+        if e > e_grid[-1]: return kJ_vals[-1]
+        if e < 1e-4: return 1.0
+        return kappaJ_interp(e)
+
+    # --- 物理演化方程 ---
+    def E2PN(e):
+        return -e * smr / (30240 * np.power(1 - e * e, 9 / 2)) * (
+                (2758560 * smr * smr - 4344852 * smr + 3786543) * np.power(e, 6.0) + (
+                42810096 * smr * smr - 78112266 * smr + 46579718) * np.power(e, 4.0) + (
+                        48711348 * smr * smr - 35583228 * smr - 36993396) * e * e + 4548096 * smr * smr + np.sqrt(
+            1 - e * e) * ((2847600 - 1139040 * smr) * np.power(e, 4.0) + (
+                35093520 - 14037408 * smr) * e * e - 5386752 * smr + 13466880) + 13509360 * smr - 15198032)
+
+    def e_phi_func(et, x):
+        e_phi_1PN = -et * (smr - 4)
+        term1 = (41 * smr ** 2 - 659 * smr + 1152) * et ** 2
+        term2 = 4 * smr ** 2 + 68 * smr
+        term3 = np.sqrt(1 - et ** 2) * (288 * smr - 720)
+        e_phi_2PN = (et / (96 * (et ** 2 - 1))) * (term1 + term2 + term3 - 1248)
+        denominator = 26880 * (1 - et ** 2) ** (5 / 2)
+        term1_3 = ((13440 * smr ** 2 + 483840 * smr - 940800) * et ** 4 + (
+                255360 * smr ** 2 + 17220 * np.pi ** 2 * smr - 2880640 * smr + 2688000) * et ** 2 - 268800 * smr ** 2 + 2396800 * smr)
+        term2_3 = np.sqrt(1 - et ** 2) * ((1050 * smr ** 3 - 134050 * smr ** 2 + 786310 * smr - 860160) * et ** 4 + (
+                -18900 * smr ** 3 + 553980 * smr ** 2 + 4305 * np.pi ** 2 * smr - 1246368 * smr + 2042880) * et ** 2 + 276640 * smr ** 2 + 2674480 * smr - 17220 * smr * np.pi ** 2 - 1451520)
+        e_phi_3PN = -et * (term1_3 + term2_3 - 17220 * smr * np.pi ** 2 - 1747200) / denominator
+        return et + e_phi_1PN * x + e_phi_2PN * x ** 2 + e_phi_3PN * x ** 3
+
+        # ==========================
+        # [UPDATED] 无保护导数函数
+        # ==========================
+        # === 关键修改：耦合导数函数 ===
+    def coupled_derivs(y, t):
+            # y[0] = x, y[1] = e
+            x = y[0]
+            e = y[1]
+
+            # 1. 基础物理保护
+            if x < 0: x = 1e-8
+            # 不锁死 x > 1/6，允许积分器冲过去，我们在后处理截断
+
+            # 防止 e 越界 (e不能小于0，不能大于1)
+            if e < 0: e = 0.0  # 偏心率不能为负
+            if e >= 1.0: e = 0.99999
+
+            one_minus_e2 = 1.0 - e * e
+            if one_minus_e2 < 1e-10: one_minus_e2 = 1e-10
+
+            # --- dx/dt Calculation ---
+            xdot = np.power(x, 5.0) * 2 * (37 * np.power(e, 4.0) + 292 * e * e + 96) * smr / (
+                        15 * np.power(one_minus_e2, 3.5))
+
+            if PN_reaction >= 1:
+                term_1pn = -(8288 * smr - 11717) * np.power(e, 6.0) \
+                           - 14 * (10122 * smr - 12217) * np.power(e, 4.0) \
+                           - 120 * (1330 * smr - 731) * e * e \
+                           - 16 * (924 * smr + 743)
+                xdot += np.power(x, 6.0) * smr / (420 * np.power(one_minus_e2, 4.5)) * term_1pn
+
+            if PN_reaction >= 1.5:
+                xdot += np.power(x, 6.5) * 256 / 5 * smr * pi * kappaE(e)
+
+            if PN_reaction >= 2:
+                term_2pn = (1964256 * smr * smr - 3259980 * smr + 3523113) * np.power(e, 8.0) + \
+                           (64828848 * smr * smr - 123108426 * smr + 83424402) * np.power(e, 6.0) + \
+                           (16650606060 * smr * smr - 207204264 * smr + 783768) * np.power(e, 4.0) + \
+                           (61282032 * smr * smr + 15464736 * smr - 92846560) * e * e + 1903104 * smr * smr + \
+                           np.sqrt(one_minus_e2) * ((2646000 - 1058400 * smr) * np.power(e, 6.0) + (
+                            64532160 - 25812864 * smr) * e * e - 580608 * smr + 1451520) + \
+                           4514976 * smr - 360224
+                xdot += np.power(x, 7.0) * smr / (45360 * np.power(one_minus_e2, 5.5)) * term_2pn
+
+            dx_dt_val = xdot / M
+
+            # --- de/dt Calculation ---
+            # 如果 e 已经非常小 (e.g. < 1e-7)，辐射反作用会使其进一步减小，但也可能因数值误差震荡
+            # 这里允许它自然演化，但如果 e=0，则 de/dt 必须为 0
+            if e <= 1e-9:
+                edot_val = 0.0
+            else:
+                edot = np.power(x, 4.0) * (-e * (121 * e * e + 304) * smr / (15 * np.power(one_minus_e2, 2.5)))
+
+                if PN_reaction >= 1:
+                    term_e_1pn = (93184 * smr - 125361) * np.power(e, 4.0) + \
+                                 12 * (54271 * smr - 59834) * e * e + \
+                                 8 * (28588 * smr + 8451)
+                    edot += np.power(x, 5.0) * e * smr / (2520 * np.power(one_minus_e2, 3.5)) * term_e_1pn
+
+                if PN_reaction >= 1.5:
+                    edot += np.power(x, 5.5) * 128 * smr * pi / 5 / e * (
+                                (e * e - 1) * kappaE(e) + np.sqrt(one_minus_e2) * kappaJ(e))
+
+                if PN_reaction >= 2:
+                    edot += np.power(x, 6.0) * E2PN(e)
+
+                edot_val = edot / M
+
+            return [dx_dt_val, edot_val]
+
+    def dl_dt(l, t, x, e):
+            # 这里的 dl_dt 需要传入当前的 x 和 e，而不是依赖插值
+            result = (np.power(x, 3 / 2))
+            if PN_orbit >= 1: result += np.power(x, 5 / 2) * 3 / (e * e - 1)
+            if PN_orbit >= 2: result += np.power(x, 7 / 2) * ((26 * smr - 51) * e * e + 28 * smr - 18) / (
+                    4 * np.power(e * e - 1, 2.0))
+            if PN_orbit >= 3: result += np.power(x, 9 / 2) * (-1) / (128 * np.power(1 - e * e, 7 / 2)) * (
+                    (1536 * smr - 3840) * np.power(e, 4.0) + (1920 - 768 * smr) * e * e - 768 * smr + np.sqrt(
+                1 - e * e) * ((1040 * smr * smr - 1760 * smr + 2496) * np.power(e, 4.0) + (
+                    5120 * smr * smr + 123 * pi * pi * smr - 17856 * smr + 8544) * e * e + 896 * smr * smr - 14624 * smr + 492 * smr * pi * pi - 192) + 1920)
+            return result / M
+    def deltafvalue(a, e, M):
+        n = np.power(a, -3 / 2) * np.sqrt(M)
+        Porb = 1 / (n / (2 * pi))
+        return 6 * np.power(2 * pi, 2 / 3) / (1 - e * e) * np.power(M, 2 / 3) * np.power(Porb, -5 / 3)
+
+    # =================================================================
+    # 2. 初始化与预检查
+    # =================================================================
+    M = m1 + m2
+    smr = m1 * m2 / M / M
+    a0 = np.power((m1 + m2) / (2 * pi * f00) ** 2, 1 / 3)
+    deltaf = deltafvalue(a0, e0, M)
+    f0 = f00 + deltaf / 2
+    omega0 = f0 * 2 * pi
+    x0 = np.power((m1 + m2) * omega0, 2 / 3)
+    vprint(f'PN_EOM = {PN_orbit}; PN_Reaction = {PN_reaction}')
+    vprint(f'm1, m2 = {m1/m_sun},{m2/m_sun} [m_sun] ; e0 = {e0}')
+    vprint(f'f_orb = {f00} [Hz]; f_angular = {f0} [Hz]; f_GR = {deltaf} [Hz]')
+
+
+
+    # [CHECK 1] 初始近星点保护
+    rp_check = (1.0 - e0) / x0
+    if rp_check < 6.0:
+        raise ValueError(f"ERROR: Initial Condition Unstable! rp = {rp_check:.2f} M (< 6M, inside ISCO).")
+        #return [np.array([0.0]), np.array([0.0]), np.array([0.0]), 0, [], np.array([0.0])]
+    if True:
+        # 设定时间网格
+        # 注意：如果 merger 发生很快，我们需要足够的时间分辨率。如果很慢，odeint 会自适应。
+        t_accuracy = int(timescale * f0 * 2) + 5000
+        t_temp = np.linspace(0, timescale, num=t_accuracy)
+
+        # 初始状态向量
+        y0 = [x0, e0]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+
+            # === 执行耦合积分 ===
+            # 这里不再涉及 x(e) 映射，直接算 x(t) 和 e(t)
+            # 允许积分器即使在 stiffness 很高时也尝试求解 (lsoda 是 odeint 的底层算法，适合刚性/非刚性自动切换)
+            sol = sci_integrate.odeint(coupled_derivs, y0, t_temp, rtol=1e-12, atol=1e-14)
+
+            xresult = sol[:, 0]
+            eresult = sol[:, 1]
+
+            # === 截断逻辑 (Merger Handling) ===
+            x_isco = 1.0 / 6.0
+
+            # 寻找 merger 点：x >= ISCO 或者 x 变成 NaN
+            bad_mask = (xresult >= x_isco) | np.isnan(xresult) | np.isinf(xresult)
+            bad_indices = np.where(bad_mask)[0]
+
+            if len(bad_indices) > 0:
+                cutoff_index = bad_indices[0]
+                vprint(
+                    f"   Merger detected at t={t_temp[cutoff_index]:.4f}s (x={xresult[cutoff_index]:.4f}). Truncating.")
+            else:
+                cutoff_index = len(t_temp)
+                # 检查是否因为 timescale 太短没跑到 merger
+                if xresult[-1] < 0.1:  # 0.1 远小于 1/6
+                    vprint(
+                        f"   [Warning] Simulation finished without merger (final x={xresult[-1]:.4f}). Increase timescale if needed.")
+
+            if cutoff_index < 2:
+                print("Error: Waveform truncated immediately.")
+                return [np.array([]), np.array([]), np.array([]), 0, [], np.array([])]
+
+            # 截断数组
+            t_temp = t_temp[:cutoff_index]
+            xresult = xresult[:cutoff_index]
+            eresult = eresult[:cutoff_index]
+
+            # 修正 e < 0 的微小数值噪音
+            eresult[eresult < 0] = 0.0
+
+            # === 计算 l(t) ===
+            # 由于 dl/dt 依赖 x 和 e，我们可以直接用现有的 xresult, eresult 算导数然后积分
+            # 这里用累积梯形积分比 odeint 更快且足够准，因为 x, e 已经有了
+            dl_vals = np.zeros_like(xresult)
+            for i in range(len(xresult)):
+                dl_vals[i] = dl_dt(0, 0, xresult[i], eresult[i])  # l, t 参数没用到
+
+            # 积分 l(t)
+            lresult = sci_integrate.cumtrapz(dl_vals, t_temp, initial=0) + l0
+
+        if len(t_temp) == 0:
+            return [np.array([]), np.array([]), np.array([]), 0, [], np.array([])]
+
+        # 更新 timescale 和插值函数
+        timescale = t_temp[-1]
+
+        # 因为已经有密集点，直接构建插值
+        x_t = sci_interpolate.interp1d(t_temp, xresult, fill_value="extrapolate")
+        e_t = sci_interpolate.interp1d(t_temp, eresult, fill_value="extrapolate")
+        l_t = sci_interpolate.interp1d(t_temp, lresult, fill_value="extrapolate")
+
+        flast = 1 / 2 / pi / M * np.power(xresult[-1], 3 / 2)
+        vprint(f'Evolution: {timescale / (365 * 24 * 3600):.2e} yr. f_initial: {f0:.4f}, f_final: {flast:.4f}')
     # =================================================================
     # 4. 波形生成与采样
     # =================================================================

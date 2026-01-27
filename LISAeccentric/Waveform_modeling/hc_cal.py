@@ -210,6 +210,75 @@ def S_n_lisa(f):
     else:
         return _S_n_lisa_original(f)
 
+
+def peters_factor_func(e):
+    if e < 1e-10: return 0.0
+    term1 = np.power(e, 12.0 / 19.0)
+    term2 = 1.0 - e * e
+    term3 = np.power(1.0 + (121.0 / 304.0) * e * e, 870.0 / 2299.0)
+    return (term1 / term2) * term3
+
+class MergerTimeAccelerator:
+    """
+    预计算 Peters (1964) 积分因子的插值表。
+    """
+    def __init__(self, cache_file='merger_time_table.npz'):
+        self.cache_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), cache_file)
+        if self._load_cache():
+            pass
+        else:
+            print("[System] Computing merger time table (first time run)...")
+            self._compute_and_save_table()
+            print(f"[System] Table computed and saved to {self.cache_file}")
+        self.interpolator = PchipInterpolator(self.e_grid, self.f_vals)
+
+    def _compute_and_save_table(self):
+        x_vals = np.linspace(0, 5, 2000)
+        self.e_grid = 1.0 - np.power(10, -x_vals)
+        self.e_grid[0] = 0.0
+        self.f_vals = np.array([self._compute_dimensionless_factor(e) for e in self.e_grid])
+        np.savez(self.cache_file, e_grid=self.e_grid, f_vals=self.f_vals)
+
+    def _load_cache(self):
+        if not os.path.exists(self.cache_file): return False
+        try:
+            data = np.load(self.cache_file)
+            self.e_grid = data['e_grid']
+            self.f_vals = data['f_vals']
+            return True
+        except Exception as e:
+            return False
+
+    def _compute_dimensionless_factor(self, e0):
+        if e0 < 1e-6: return 1.0
+        term_c0 = np.power(e0, 12.0 / 19.0) * np.power(1 + 121.0 / 304.0 * e0 ** 2, 870.0 / 2299.0)
+        c0_norm = (1 - e0 ** 2) / term_c0
+        def integrand(e):
+            numer = np.power(e, 29.0 / 19.0) * np.power(1 + 121.0 / 304.0 * e ** 2, 1181.0 / 2299.0)
+            denom = np.power(1 - e ** 2, 1.5)
+            return numer / denom
+        integral_val, _ = quad(integrand, 0, e0)
+        return (48.0 / 19.0) * np.power(c0_norm, 4.0) * integral_val
+
+    def get_factor(self, e):
+        if e < 1e-4: return 1.0
+        if e > 0.99999: return (768.0 / 425.0) * np.power(1 - e ** 2, 3.5)
+        return self.interpolator(e)
+
+# 初始化全局加速器 (必须在 Core 计算前)
+_ACCELERATOR = MergerTimeAccelerator()
+
+def tmerger_integral(m1, m2, a0, e0):
+    beta = 64.0 / 5.0 * m1 * m2 * (m1 + m2)
+    if beta == 0: return 1e99
+    t_circ = np.power(a0, 4.0) / (4.0 * beta)
+    if np.isscalar(e0):
+        factor = _ACCELERATOR.get_factor(e0)
+    else:
+        factor = np.array([_ACCELERATOR.get_factor(e) for e in e0])
+    return t_circ * factor
+
+
 def chirp_mass(m1, m2):
     return np.power(m1 * m2, 0.6) / (np.power(m1 + m2, 0.2))
 
@@ -226,14 +295,20 @@ def dforb_dt(m1, m2, a, e):
 # ==========================================
 # 2. 核心计算逻辑
 # ==========================================
-
 def _core_calculator(args):
     """
     底层计算核心。
     Args: (m1_SI, m2_SI, a_SI, e, Dl_SI, tobs_SI, target_max_points, verbose)
     """
-    # [修改] 增加 verbose 参数接收
     m1, m2, a, e, Dl, tobs, target_max_points, verbose = args
+
+    # [新增] 核心检查：如果寿命小于观测时间，截断观测时间
+    # 注意：这里的 m1, m2, a 已经是 SI 单位，可以直接传给 tmerger_integral
+    t_life = tmerger_integral(m1, m2, a, e)
+    if t_life < tobs:
+        if verbose:
+            print(f"   [System Check] Life ({t_life/years:.2e} yr) < Tobs. Truncating Tobs.")
+        tobs = t_life
 
     # 1. 计算基频
     forb = 1 / 2 / pi * np.sqrt(m1 + m2) * np.power(a, -3.0 / 2.0)
@@ -248,16 +323,13 @@ def _core_calculator(args):
     if n_end < n_start:
         return [], [], [], []
 
-    # [修改] 智能稀疏采样逻辑 + verbose 控制
+    # 智能稀疏采样逻辑
     step = 1
     total_harmonics = n_end - n_start
-
-    # 如果总点数超过了设定的上限，则增加步长
     if total_harmonics > target_max_points:
         step = int(total_harmonics / target_max_points)
-        # [核心] 只有当 verbose=True 时才打印
         if verbose:
-            print(f"   [Info] Large harmonics ({total_harmonics}), downsampling step={step} (max={target_max_points})")
+            print(f"   [Info] Large harmonics ({total_harmonics}), downsampling step={step}")
 
     n_arr = np.arange(n_start, n_end + 1, step, dtype=np.float64)
 
