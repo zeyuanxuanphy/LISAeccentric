@@ -1833,13 +1833,13 @@ def eccGW_waveform(f00, e0, timescale, m1, m2, theta, phi, R, l0=0, ts=None, PN_
             if len(bad_indices) > 0:
                 cutoff_index = bad_indices[0]
                 vprint(
-                    f"   Merger detected at t={t_temp[cutoff_index]:.4f}s (x={xresult[cutoff_index]:.4f}). Truncating.")
+                    f"   Merger detected at t={t_temp[cutoff_index]}s (x={xresult[cutoff_index]}). Truncating.")
             else:
                 cutoff_index = len(t_temp)
                 # 检查是否因为 timescale 太短没跑到 merger
                 if xresult[-1] < 0.1:  # 0.1 远小于 1/6
                     vprint(
-                        f"   [Warning] Simulation finished without merger (final x={xresult[-1]:.4f}). Increase timescale if needed.")
+                        f"   [Warning] Simulation finished without merger (final x={xresult[-1]}). Increase timescale if needed.")
 
             if cutoff_index < 2:
                 print("Error: Waveform truncated immediately.")
@@ -1875,7 +1875,7 @@ def eccGW_waveform(f00, e0, timescale, m1, m2, theta, phi, R, l0=0, ts=None, PN_
         l_t = sci_interpolate.interp1d(t_temp, lresult, fill_value="extrapolate")
 
         flast = 1 / 2 / pi / M * np.power(xresult[-1], 3 / 2)
-        vprint(f'Evolution: {timescale / (365 * 24 * 3600):.2e} yr. f_initial: {f0:.4f}, f_final: {flast:.4f}')
+        vprint(f'Evolution: {timescale / (365 * 24 * 3600)} yr. f_initial: {f0}, f_final: {flast}')
     # =================================================================
     # 4. 波形生成与采样
     # =================================================================
