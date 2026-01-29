@@ -1839,7 +1839,7 @@ def eccGW_waveform(f00, e0, timescale, m1, m2, theta, phi, R, l0=0, ts=None, PN_
                 # 检查是否因为 timescale 太短没跑到 merger
                 if xresult[-1] < 0.1:  # 0.1 远小于 1/6
                     vprint(
-                        f"   [Warning] Simulation finished without merger (final x={xresult[-1]}). Increase timescale if needed.")
+                        f"   Simulation finished without merger (final x={xresult[-1]}).")
 
             if cutoff_index < 2:
                 print("Error: Waveform truncated immediately.")
